@@ -119,3 +119,29 @@ canvas.wheel { width: 240px; height: 240px; }
 
 #fsbtn { position: absolute; right: max(64px, calc(env(safe-area-inset-right) + 54px)); bottom: 12px; pointer-events: auto; }
 @media (max-width: 700px) { #fsbtn { bottom: auto; top: 6px; right: 52px; padding: 4px 10px; } }
+
+/* shop */
+#shopov { position: fixed; inset: 0; background: #000c; z-index: 30; display: flex; align-items: center; justify-content: center; padding: 12px; }
+.shop { max-height: 94vh; overflow: auto; }
+.tabs { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; margin: 8px 0; }
+.items { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin: 10px 0; }
+.item { background: #ffffff10; border: 1px solid #ffffff22; border-radius: 14px; padding: 10px; display: flex; flex-direction: column; gap: 6px; align-items: center; }
+.item .ico { font-size: 34px; } .item b { font-size: 14px; } .item button { width: 100%; font-size: 13px; padding: 8px 4px; }
+/* nothing gets cut off: wrap long text, never wider than the screen */
+#panel h3, .card h2, #prompt, #toast { white-space: normal; overflow-wrap: anywhere; }
+#toast { width: min(92vw, 900px); }
+#prompt { max-width: 90vw; text-align: center; }
+#board, #lobbybar, #chat, #panel, .card { max-width: calc(100vw - 12px); }
+#board span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cards { flex-wrap: wrap; }
+.cardx { flex: 0 0 auto; }
+@media (max-width: 700px) {
+  .cardx { width: 48px; height: 68px; font-size: 14px; } .cardx .big { font-size: 22px; }
+  canvas.wheel { width: 190px; height: 190px; } canvas.reels { height: 130px; }
+  .numgrid button { font-size: 10px; padding: 5px 0; }
+  .drinks button { width: 100%; }
+}
+
+#donebtn { position: absolute; left: 50%; transform: translateX(-50%); top: 96px; pointer-events: auto; font-size: 14px; padding: 8px 14px; }
+@media (max-width: 700px) { #donebtn { top: 50px; font-size: 11px; padding: 5px 9px; } }
+.readyline { font-size: 13px; opacity: .8; margin-top: 8px; }

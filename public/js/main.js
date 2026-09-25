@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 const QS = new URLSearchParams(location.search);
 if (QS.get('shim')) window.requestAnimationFrame = f => setTimeout(() => f(performance.now()), 16);
-import { World, Googly, LOBBY_OFF } from './world.js';
+import { World, Googly, Pet, LOBBY_OFF } from './world.js';
+import { wardrobe, openShop, addCoins } from './shop.js';
 import { sfx, unlockAudio, toggleMute } from './sfx.js';
 import * as Games from './games.js';
 
@@ -24,6 +25,22 @@ const world = new World($('view'));
 const me = { fig: new Googly(myColor), x: 0, z: 3, yaw: Math.PI, vx: 0, vz: 0 };
 world.scene.add(me.fig.group);
 me.fig.onStep = v => sfx.step(v);
+me.fig.setOutfit(wardrobe.outfit);
+me.pet = null;
+function setPet(holder, kind, color) {
+  if (holder.pet?.kind === kind) return;
+  if (holder.pet) world.scene.remove(holder.pet.group);
+  holder.pet = kind ? new Pet(kind, color) : null;
+  if (holder.pet) world.scene.add(holder.pet.group);
+}
+setPet(me, wardrobe.outfit.pet, myColor);
+const coinLabels = () => document.querySelectorAll('.coinv').forEach(e => e.textContent = wardrobe.coins.toLocaleString());
+coinLabels();
+function showShop() {
+  const ov = $('shopov'); ov.classList.remove('hidden'); sfx.click();
+  openShop(ov, outfit => { me.fig.setOutfit(outfit); setPet(me, outfit.pet, myColor); send({ t: 'outfit', outfit }); coinLabels(); }, () => { ov.classList.add('hidden'); coinLabels(); });
+}
+for (const id of ['shopbtn1', 'shopbtn2', 'shopbtn3']) $(id).onclick = showShop;
 let camYaw = Math.PI, camPitch = 0.3, camDist = 4.6;
 
 // ---------------------------------------------------------------- name screen
@@ -34,7 +51,7 @@ $('go').onclick = () => {
   unlockAudio();
   myName = $('nm').value.trim().slice(0, 14) || 'Googly' + Math.floor(Math.random() * 90 + 10);
   localStorage.setItem('gg-name', myName); localStorage.setItem('gg-color', myColor);
-  world.scene.remove(me.fig.group); me.fig = new Googly(myColor); me.fig.onStep = v => sfx.step(v); world.scene.add(me.fig.group);
+  world.scene.remove(me.fig.group); me.fig = new Googly(myColor); me.fig.onStep = v => sfx.step(v); me.fig.setOutfit(wardrobe.outfit); world.scene.add(me.fig.group); setPet(me, null); setPet(me, wardrobe.outfit.pet, myColor);
   connect();
 };
 $('nm').addEventListener('keydown', e => { if (e.key === 'Enter') $('go').click(); });
@@ -46,7 +63,7 @@ let handlers = {};
 function send(m) { if (ws?.readyState === 1) ws.send(JSON.stringify(m)); }
 function connect() {
   ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`);
-  ws.onopen = () => send({ t: 'hello', name: myName, color: myColor });
+  ws.onopen = () => send({ t: 'hello', name: myName, color: myColor, outfit: wardrobe.outfit });
   ws.onmessage = e => { const m = JSON.parse(e.data); onMsg(m); (handlers[m.t] || []).forEach(f => f(m)); };
   ws.onclose = () => { toast('Disconnected — reconnecting…', '#ff8a8a'); setTimeout(connect, 1500); inRoom = false; };
 }
@@ -60,7 +77,7 @@ function onMsg(m) {
     case 'joined': inRoom = true; show('hud'); history.replaceState(null, '', `?room=${m.code}`); break;
     case 'room': onRoom(m); break;
     case 'snap': onSnap(m.p); break;
-    case 'gone': { const o = others.get(m.id); if (o) { world.scene.remove(o.fig.group); others.delete(m.id); } break; }
+    case 'gone': { const o = others.get(m.id); if (o) { world.scene.remove(o.fig.group); setPet(o, null); others.delete(m.id); } break; }
     case 'chat': onChat(m); break;
     case 'pop': onPop(m); break;
     case 'start': enterCasino(); toast('THE DOORS ARE OPEN!', '#ffd84a'); sfx.fanfare(); closePanel(); break;
@@ -87,6 +104,7 @@ function renderRooms(list) {
     row.append(b); el.append(row);
   }
 }
+$('solo').onclick = () => { sfx.click(); send({ t: 'solo', nights: +$('solonights').value }); };
 $('create').onclick = () => { sfx.click(); send({ t: 'create', name: $('lobbyname').value.trim(), public: $('pub').checked, max: +$('maxp').value }); };
 $('joincode').onclick = () => { sfx.click(); send({ t: 'join', code: $('code').value.trim().toUpperCase() }); };
 $('code').addEventListener('keydown', e => { if (e.key === 'Enter') $('joincode').click(); });
@@ -131,10 +149,29 @@ function onRoom(m) {
   // name tags on others show their money in the casino
   for (const q of m.players) {
     const o = others.get(q.id);
-    if (o) { const sub = m.state === 'lobby' ? '' : money(q.cash); if (o.fig.tagText !== q.name + sub) o.fig.setName(q.name, sub); }
+    if (o) { const sub = m.state === 'lobby' ? '' : money(q.cash); if (o.fig.tagText !== q.name + sub) o.fig.setName(q.name, sub); o.fig.setOutfit(q.outfit || {}); setPet(o, q.outfit?.pet, q.color); }
+  }
+  // done-for-tonight / ready button
+  const db = $('donebtn');
+  const playing = m.state === 'playing' && p && !p.bankrupt;
+  db.classList.toggle('hidden', !playing);
+  if (playing) {
+    const others = m.players.filter(q => !q.bankrupt);
+    if (m.phase === 'night') {
+      const n = others.filter(q => q.done).length;
+      db.textContent = p.done ? `↩ BACK TO THE TABLES (${n}/${others.length} done)` : (others.length > 1 ? `🛌 DONE FOR TONIGHT (${n}/${others.length})` : '🛌 DONE FOR TONIGHT');
+      db.className = p.done ? 'grey' : 'purple';
+    } else if (m.phase === 'break') {
+      const n = m.players.filter(q => q.ready).length;
+      db.textContent = p.ready ? `WAITING FOR OTHERS (${n}/${m.players.length})` : `▶ READY FOR NIGHT ${m.night + 1}`;
+      db.className = p.ready ? 'grey' : 'green';
+    }
+    const rl = document.querySelector('.readyline');
+    if (rl && m.phase === 'break') rl.textContent = 'Ready: ' + m.players.map(q => `${q.ready ? '✅' : '⏳'} ${q.name}`).join('  ');
   }
   updateClock();
 }
+$('donebtn').onclick = () => { sfx.click(); send({ t: room?.phase === 'break' ? 'ready' : 'done' }); };
 $('lobbymax').onchange = () => send({ t: 'setMax', max: +$('lobbymax').value });
 $('start').onclick = () => { sfx.click(); send({ t: 'start', nights: +$('nights').value }); };
 $('leave').onclick = () => leaveRoom();
@@ -144,7 +181,7 @@ $('invite').onclick = async () => {
   catch { prompt('Send this link to your friends:', url); }
 };
 function leaveRoom() { send({ t: 'leave' }); inRoom = false; room = null; clearOthers(); closePanel(); closeOverlay(); history.replaceState(null, '', '/'); }
-function clearOthers() { for (const o of others.values()) world.scene.remove(o.fig.group); others.clear(); }
+function clearOthers() { for (const o of others.values()) { world.scene.remove(o.fig.group); setPet(o, null); } others.clear(); }
 
 function enterLobby() { where = 'lobby'; me.x = (Math.random() - 0.5) * 6; me.z = 4.5; me.yaw = Math.PI; camYaw = Math.PI; }
 function enterCasino() { where = 'casino'; placeInCasino(); }
@@ -160,14 +197,15 @@ function onSnap(list) {
     if (!o) {
       const q = room?.players.find(p => p.id === id);
       if (!q) continue;
-      o = { fig: new Googly(q.color, q.name), x, z, yaw, tx: x, tz: z, tyaw: yaw };
+      o = { fig: new Googly(q.color, q.name), x, z, yaw, tx: x, tz: z, tyaw: yaw, pet: null };
+      o.fig.setOutfit(q.outfit || {}); setPet(o, q.outfit?.pet, q.color);
       o.fig.onStep = v => { const d = Math.hypot(o.x - me.x, o.z - me.z); if (d < 8 && o.where === where) sfx.step(v * 0.3 * (1 - d / 8)); };
       world.scene.add(o.fig.group);
       others.set(id, o);
     }
     o.tx = x; o.tz = z; o.tyaw = yaw; o.moving = moving; o.where = inCasino ? 'casino' : 'lobby';
   }
-  for (const [id, o] of others) if (!seen.has(id)) { world.scene.remove(o.fig.group); others.delete(id); }
+  for (const [id, o] of others) if (!seen.has(id)) { world.scene.remove(o.fig.group); setPet(o, null); others.delete(id); }
 }
 const off = w => w === 'lobby' ? LOBBY_OFF : new THREE.Vector3();
 
@@ -216,13 +254,24 @@ setInterval(updateClock, 500);
 function onNightEnd(m) {
   closePanel();
   sfx.bell();
-  const rows = m.standings.map((s, i) => `<div class="stand"><span>${m.final ? ['🥇', '🥈', '🥉'][i] || (i + 1) + '.' : (i + 1) + '.'} <span class="dot" style="background:${s.color}"></span>${esc(s.name)}${s.id === myId ? ' (you)' : ''}${s.bankrupt ? ' · BANKRUPT' : ''}</span><span>${money(s.cash)} <small style="opacity:.7">${m.final ? '' : 'tonight ' + signed(s.tonight)}</small></span></div>`).join('');
+  const rows = m.standings.map((s, i) => `<div class="stand"><span>${m.final && s.coins ? `<small style="color:#ffd84a">🪙${s.coins}</small> ` : ''}${m.final ? ['🥇', '🥈', '🥉'][i] || (i + 1) + '.' : (i + 1) + '.'} <span class="dot" style="background:${s.color}"></span>${esc(s.name)}${s.id === myId ? ' (you)' : ''}${s.bankrupt ? ' · BANKRUPT' : ''}</span><span>${money(s.cash)} <small style="opacity:.7">${m.final ? '' : 'tonight ' + signed(s.tonight)}</small></span></div>`).join('');
   const winner = m.standings[0];
   const host = room?.host === myId;
   showOverlay(`<div class="card wide"><h2>${m.final ? (winner.id === myId ? 'YOU WIN THE MONTH!' : `${esc(winner.name)} WINS!`) : `NIGHT ${m.night} IS OVER`}</h2>
-    <p class="sub">${m.final ? `${m.nights} nights at the Googly Grand` : `Taxi back to the hotel… night ${m.night + 1} of ${m.nights} starts soon`}</p>${rows}
-    <div class="row">${m.final ? (host ? '<button id="tolobby" class="green">BACK TO LOBBY</button>' : '<p class="tiny">Waiting for the host…</p>') : ''}<button id="closeov" class="grey">OK</button></div></div>`);
-  if (m.final) { (winner.id === myId ? sfx.fanfare : sfx.aww)(); if (winner.id === myId) me.fig.cheer(true); }
+    <p class="sub">${m.final ? `${m.nights} nights at the Googly Grand` : `Taxi back to the hotel… press READY when you want night ${m.night + 1} of ${m.nights} to start`}</p>${rows}
+    ${m.final ? '' : '<div class="readyline"></div>'}
+    <div class="row">${m.final ? (host ? '<button id="tolobby" class="green">BACK TO LOBBY</button>' : '<p class="tiny">Waiting for the host…</p>') : `<button id="readybtn" class="green">▶ READY</button>${host && room.players.length > 1 ? '<button id="forcenext" class="gold">START NEXT NIGHT</button>' : ''}`}<button id="closeov" class="grey">LOOK AROUND</button></div></div>`);
+  if ($('readybtn')) $('readybtn').onclick = () => { send({ t: 'ready' }); $('readybtn').disabled = true; $('readybtn').textContent = 'WAITING…'; sfx.click(); };
+  if ($('forcenext')) $('forcenext').onclick = () => { send({ t: 'nextNight' }); sfx.click(); };
+  if (m.final) {
+    (winner.id === myId ? sfx.fanfare : sfx.aww)(); if (winner.id === myId) me.fig.cheer(true);
+    const mineRow = m.standings.find(s => s.id === myId);
+    if (mineRow?.coins && !onNightEnd.paid?.has(room.code + m.nights + mineRow.cash)) {
+      (onNightEnd.paid ||= new Set()).add(room.code + m.nights + mineRow.cash);
+      addCoins(mineRow.coins); coinLabels();
+      setTimeout(() => { toast(`+${mineRow.coins.toLocaleString()} COINS! 🪙`, '#ffd84a'); sfx.coins(); }, 900);
+    }
+  }
   $('closeov').onclick = closeOverlay;
   if ($('tolobby')) $('tolobby').onclick = () => send({ t: 'toLobby' });
 }
@@ -355,6 +404,7 @@ function frame(now) {
   me.fig.group.rotation.y = me.yaw;
   me.fig.group.visible = inRoom;
   me.fig.update(dt, actual, run);
+  if (me.pet) { me.pet.group.visible = inRoom; me.pet.update(dt, me.fig.group.position, me.yaw); }
   // others
   for (const o of others.values()) {
     const k = 1 - Math.exp(-10 * dt);
@@ -366,6 +416,7 @@ function frame(now) {
     o.fig.group.rotation.y = o.yaw;
     o.fig.group.visible = o.where === where;
     o.fig.update(dt, o.moving ? Math.hypot(o.x - px, o.z - pz) / dt : 0);
+    if (o.pet) { o.pet.group.visible = o.fig.group.visible; o.pet.update(dt, o.fig.group.position, o.yaw); }
   }
   // send position
   sendT -= dt;
@@ -400,6 +451,8 @@ show('scr-name');
 if (myName && wantRoom) $('go').click();
 // test hook: ?bot=1[&panel=slot] creates a lobby, starts, and optionally opens a table
 if (QS.get('bot')) {
+  if (QS.get('dress')) { const [sh, pa, ha, pe] = QS.get('dress').split(','); Object.assign(wardrobe.outfit, { shirt: sh, pants: pa, hat: ha, pet: pe }); wardrobe.coins = 2600; }
+  if (QS.get('shop')) setTimeout(showShop, 1500);
   $('nm').value = 'Tester'; $('go').click();
   (handlers.rooms ||= []).push(() => { if (!inRoom && !QS.get('stay')) send({ t: 'create', name: 'Bot Lobby' }); });
   (handlers.joined ||= []).push(() => { if (QS.get('start')) setTimeout(() => send({ t: 'start', nights: 3 }), 600); });

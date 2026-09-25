@@ -109,10 +109,35 @@ export class Googly {
       const sh = new THREE.Mesh(new THREE.SphereGeometry(0.1, 14, 10), shoe); sh.scale.set(0.85, 0.55, 1.45); sh.position.set(0, -0.24, 0.06); kn.add(sh);
       th.castShadow = sn.castShadow = sh.castShadow = true;
       this.hips.push(hp); this.knees.push(kn);
+      (this.legMeshes ||= []).push(th, sn);
     }
     this.phase = 0; this.gait = 0; this.t = Math.random() * 10; this.cheerT = 0; this.sulkT = 0; this.hopY = 0; this.hopV = 0; this.stumble = 0; this.nextStumble = 4 + Math.random() * 6;
     this.lastSide = 0; this.onStep = null;
+    this.dark = dark;
+    this.outfitNode = new THREE.Group(); this.body.add(this.outfitNode);
+    this.pantsNode = new THREE.Group(); this.pelvis.add(this.pantsNode);
+    this.outfitKey = '';
     if (name) this.setName(name);
+  }
+  /** Shop cosmetics: shirt, pants, hat (pets are separate objects that follow). */
+  setOutfit(o = {}) {
+    const key = JSON.stringify(o);
+    if (key === this.outfitKey) return;
+    this.outfitKey = key;
+    this.outfitNode.clear(); this.pantsNode.clear();
+    const shirt = SHIRTS[o.shirt];
+    if (shirt) {
+      const band = new THREE.Mesh(new THREE.CylinderGeometry(0.312, 0.318, 0.46, 28, 1, true), shirt.mat());
+      band.position.y = 0.3; band.castShadow = true; this.outfitNode.add(band);
+      const hem = new THREE.Mesh(new THREE.TorusGeometry(0.315, 0.018, 6, 28), shirt.mat()); hem.rotation.x = Math.PI / 2; hem.position.y = 0.07; this.outfitNode.add(hem);
+      for (const side of [-1, 1]) { const sl = new THREE.Mesh(new THREE.SphereGeometry(0.075, 12, 10), shirt.mat()); sl.position.set(side * 0.28, 0.42, 0); this.outfitNode.add(sl); }
+      shirt.extra?.(this.outfitNode);
+    }
+    const pants = PANTS[o.pants];
+    this.legMeshes.forEach((m, i) => { m.material = pants && (!pants.shorts || i % 2 === 0) ? pants.mat() : this.dark; });
+    if (pants) { const w = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.24, 0.16, 24), pants.mat()); w.position.y = 0.02; this.pantsNode.add(w); }
+    const hat = HATS[o.hat];
+    if (hat) { const h = hat.make(); h.position.y = 0.87; this.outfitNode.add(h); this.hatSpin = h.userData.spin || null; } else this.hatSpin = null;
   }
   setName(name, sub = '') {
     if (this.tag) this.group.remove(this.tag);
@@ -190,6 +215,7 @@ export class Googly {
       }
       e.pupil.position.set(e.p.x, e.p.y, 0.022);
     }
+    if (this.hatSpin) this.hatSpin.rotation.y += dt * 14;
     if (this.bubble) { this.bubbleT -= dt; if (this.bubbleT <= 0) { this.group.remove(this.bubble); this.bubble = null; } }
   }
 }
@@ -412,5 +438,94 @@ export class World {
     if (this.orb) this.orb.position.y = 1.7 + Math.sin(t * 2) * 0.1;
     if (this.rotor) this.rotor.rotation.y += dt * (this.rotorSpeed || 0.4);
     this.neons.forEach((m, i) => { m.emissiveIntensity = 1.6 + 0.3 * Math.sin(t * 3 + i); });
+  }
+}
+
+// ------------------------------------------------------------------ shop items
+const stripes = (a, b, n = 8) => canvasTex(64, 256, (g, w, h) => { for (let i = 0; i < n; i++) { g.fillStyle = i % 2 ? b : a; g.fillRect(0, i * h / n, w, h / n); } });
+const flowers = () => canvasTex(256, 256, (g, w) => { g.fillStyle = '#1aa3a3'; g.fillRect(0, 0, w, w); for (let i = 0; i < 40; i++) { const x = Math.random() * w, y = Math.random() * w; g.fillStyle = ['#ffd84a', '#ff5a8a', '#fff'][i % 3]; for (let k = 0; k < 5; k++) { const a = k / 5 * 6.28; g.beginPath(); g.arc(x + Math.cos(a) * 9, y + Math.sin(a) * 9, 6, 0, 7); g.fill(); } } });
+const rainbow = () => canvasTex(64, 256, (g, w, h) => ['#e63946', '#ff8c2e', '#ffd84a', '#2fb34a', '#2f7bff', '#9b5de5'].forEach((c, i) => { g.fillStyle = c; g.fillRect(0, i * h / 6, w, h / 6); }));
+const memo = f => { let m; return () => m ||= f(); };
+export const SHIRTS = {
+  redtee: { name: 'Red Tee', price: 150, mat: memo(() => std(0xd62828, 0.7)) },
+  greentee: { name: 'Green Tee', price: 150, mat: memo(() => std(0x2b9348, 0.7)) },
+  stripes: { name: 'Sailor Stripes', price: 300, mat: memo(() => new THREE.MeshStandardMaterial({ map: stripes('#ffffff', '#1d3a8a', 10), roughness: 0.7 })) },
+  hawaii: { name: 'Hawaiian Shirt', price: 500, mat: memo(() => new THREE.MeshStandardMaterial({ map: flowers(), roughness: 0.7 })) },
+  tux: { name: 'Tuxedo', price: 800, mat: memo(() => std(0x111114, 0.4)), extra: n => { const f = new THREE.Mesh(new THREE.PlaneGeometry(0.16, 0.36), std(0xffffff, 0.5)); f.position.set(0, 0.3, 0.322); n.add(f); for (const s of [-1, 1]) { const b = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.05, 0.03), std(0xb3121f, 0.4)); b.position.set(s * 0.04, 0.46, 0.33); n.add(b); } } },
+  gold: { name: 'Solid Gold Jacket', price: 2000, mat: memo(() => std(0xffc93a, 0.2, 1)) },
+};
+export const PANTS = {
+  jeans: { name: 'Blue Jeans', price: 150, mat: memo(() => std(0x2c4a80, 0.8)) },
+  khaki: { name: 'Khakis', price: 150, mat: memo(() => std(0xb89a6a, 0.8)) },
+  shorts: { name: 'Beach Shorts', price: 250, shorts: true, mat: memo(() => std(0xff8c2e, 0.7)) },
+  tuxpants: { name: 'Tux Pants', price: 600, mat: memo(() => std(0x111114, 0.4)) },
+  rainbow: { name: 'Rainbow Pants', price: 1200, mat: memo(() => new THREE.MeshStandardMaterial({ map: rainbow(), roughness: 0.6 })) },
+};
+export const HATS = {
+  cap: { name: 'Ball Cap', price: 200, make: () => { const g = new THREE.Group(); const d = new THREE.Mesh(new THREE.SphereGeometry(0.25, 20, 10, 0, 6.29, 0, 1.4), std(0x2f7bff, 0.5)); d.position.y = -0.1; g.add(d); const v = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.02, 20, 1, false, -1.2, 2.4), std(0x2f7bff, 0.5)); v.position.set(0, -0.06, 0.18); g.add(v); return g; } },
+  beanie: { name: 'Beanie', price: 250, make: () => { const g = new THREE.Group(); const d = new THREE.Mesh(new THREE.SphereGeometry(0.27, 20, 12, 0, 6.29, 0, 1.6), new THREE.MeshStandardMaterial({ map: stripes('#e63946', '#ffffff', 6), roughness: 0.9 })); d.position.y = -0.12; g.add(d); const p = new THREE.Mesh(new THREE.SphereGeometry(0.07, 12, 8), std(0xffffff, 0.9)); p.position.y = 0.16; g.add(p); return g; } },
+  cowboy: { name: 'Cowboy Hat', price: 400, make: () => { const g = new THREE.Group(), m = std(0x6b4423, 0.7); const b = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.02, 28), m); g.add(b); const c = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 0.22, 20), m); c.position.y = 0.11; g.add(c); return g; } },
+  tophat: { name: 'Top Hat', price: 700, make: () => { const g = new THREE.Group(), m = std(0x18181c, 0.35); g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.26, 0.02, 28), m)); const c = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.32, 24), m); c.position.y = 0.16; g.add(c); const r = new THREE.Mesh(new THREE.CylinderGeometry(0.162, 0.162, 0.05, 24), std(0xb3121f, 0.5)); r.position.y = 0.05; g.add(r); return g; } },
+  propeller: { name: 'Propeller Cap', price: 900, make: () => { const g = HATS.cap.make(); const p = new THREE.Group(); for (const s of [-1, 1]) { const b = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.01, 0.06), std(s < 0 ? 0xffd84a : 0xe63946, 0.4)); b.position.x = s * 0.17; p.add(b); } p.position.y = 0.2; g.add(p); const st = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.01, 0.1, 6), std(0x888888)); st.position.y = 0.15; g.add(st); g.userData.spin = p; return g; } },
+  crown: { name: 'Royal Crown', price: 2500, make: () => { const g = new THREE.Group(), m = std(0xffc93a, 0.2, 1); const r = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.12, 24, 1, true), m); r.position.y = 0.02; g.add(r); for (let i = 0; i < 6; i++) { const a = i / 6 * 6.28; const sp = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.12, 6), m); sp.position.set(Math.cos(a) * 0.19, 0.14, Math.sin(a) * 0.19); g.add(sp); const j = new THREE.Mesh(new THREE.SphereGeometry(0.025, 8, 6), std([0xe63946, 0x2f7bff, 0x2fb34a][i % 3], 0.1)); j.position.set(Math.cos(a) * 0.2, 0.03, Math.sin(a) * 0.2); g.add(j); } return g; } },
+};
+export const PETS = {
+  duck: { name: 'Rubber Duck', price: 400 }, dog: { name: 'Puppy', price: 800 }, cat: { name: 'Kitty', price: 800 },
+  googlet: { name: 'Mini Googly', price: 1200 }, dragon: { name: 'Baby Dragon', price: 3000 },
+};
+
+/** A pet that trots along behind its owner. */
+export class Pet {
+  constructor(kind, ownerColor = '#2f7bff') {
+    this.kind = kind;
+    this.group = new THREE.Group();
+    this.body = new THREE.Group(); this.group.add(this.body);
+    const eye = (x, y, z, r = 0.05) => { const w = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 8), std(0xffffff, 0.3)); w.position.set(x, y, z); w.scale.z = 0.5; this.body.add(w); const p = new THREE.Mesh(new THREE.SphereGeometry(r * 0.5, 8, 6), std(0x050505, 0.2)); p.position.set(x, y - r * 0.2, z + r * 0.35); this.body.add(p); (this.pupils ||= []).push(p); };
+    const add = (geo, m, x, y, z) => { const n = new THREE.Mesh(geo, m); n.position.set(x, y, z); n.castShadow = true; this.body.add(n); return n; };
+    if (kind === 'duck') {
+      const y = std(0xffd84a, 0.3); add(new THREE.SphereGeometry(0.16, 16, 12), y, 0, 0.16, 0).scale.set(1, 0.85, 1.25);
+      add(new THREE.SphereGeometry(0.1, 14, 10), y, 0, 0.32, 0.1);
+      add(new THREE.ConeGeometry(0.04, 0.1, 8), std(0xff8c2e, 0.4), 0, 0.31, 0.22).rotation.x = Math.PI / 2;
+      eye(-0.045, 0.36, 0.17, 0.03); eye(0.045, 0.36, 0.17, 0.03);
+    } else if (kind === 'dog' || kind === 'cat') {
+      const c = std(kind === 'dog' ? 0xb07a45 : 0x8a8a92, 0.6);
+      add(new THREE.CapsuleGeometry(0.1, 0.22, 4, 10), c, 0, 0.2, 0).rotation.x = Math.PI / 2;
+      add(new THREE.SphereGeometry(0.12, 14, 10), c, 0, 0.3, 0.2);
+      for (const [x, z] of [[-0.07, 0.1], [0.07, 0.1], [-0.07, -0.1], [0.07, -0.1]]) add(new THREE.CylinderGeometry(0.03, 0.03, 0.14, 6), c, x, 0.07, z);
+      if (kind === 'dog') for (const s of [-1, 1]) add(new THREE.SphereGeometry(0.05, 8, 6), std(0x6b4423, 0.6), s * 0.1, 0.33, 0.18).scale.set(0.6, 1.4, 0.6);
+      else for (const s of [-1, 1]) add(new THREE.ConeGeometry(0.04, 0.09, 4), c, s * 0.07, 0.43, 0.2);
+      this.tail = add(new THREE.CylinderGeometry(0.02, 0.012, 0.2, 6), c, 0, 0.3, -0.18); this.tail.rotation.x = -0.6;
+      eye(-0.045, 0.34, 0.3, 0.035); eye(0.045, 0.34, 0.3, 0.035);
+      add(new THREE.SphereGeometry(0.025, 8, 6), std(0x111111, 0.3), 0, 0.29, 0.32);
+    } else if (kind === 'googlet') {
+      add(new THREE.CapsuleGeometry(0.13, 0.14, 6, 14), new THREE.MeshPhysicalMaterial({ color: ownerColor, roughness: 0.3, clearcoat: 0.6 }), 0, 0.25, 0);
+      eye(-0.055, 0.34, 0.11, 0.055); eye(0.055, 0.34, 0.11, 0.055);
+    } else {
+      const p = std(0x7b3fc4, 0.4);
+      add(new THREE.SphereGeometry(0.15, 16, 12), p, 0, 0.35, 0).scale.set(1, 1, 1.3);
+      add(new THREE.SphereGeometry(0.11, 14, 10), p, 0, 0.48, 0.16);
+      for (const s of [-1, 1]) add(new THREE.ConeGeometry(0.03, 0.1, 6), std(0xffd84a, 0.3), s * 0.05, 0.6, 0.14);
+      this.wings = [-1, 1].map(s => { const w = add(new THREE.PlaneGeometry(0.3, 0.18), new THREE.MeshStandardMaterial({ color: 0xb197fc, side: THREE.DoubleSide, roughness: 0.5 }), s * 0.18, 0.42, -0.02); return w; });
+      this.tail = add(new THREE.ConeGeometry(0.05, 0.28, 8), p, 0, 0.3, -0.22); this.tail.rotation.x = -Math.PI / 2 - 0.3;
+      eye(-0.045, 0.52, 0.24, 0.035); eye(0.045, 0.52, 0.24, 0.035);
+      this.flyer = true;
+    }
+    this.pos = new THREE.Vector3(); this.placed = false; this.t = Math.random() * 10; this.yaw = 0;
+  }
+  update(dt, owner, ownerYaw) {
+    this.t += dt;
+    const behind = new THREE.Vector3(-Math.sin(ownerYaw) * 0.85 + Math.cos(ownerYaw) * 0.35, 0, -Math.cos(ownerYaw) * 0.85 - Math.sin(ownerYaw) * 0.35).add(owner);
+    if (!this.placed || this.pos.distanceTo(behind) > 6) { this.pos.copy(behind); this.placed = true; }
+    const before = this.pos.clone();
+    this.pos.lerp(behind, 1 - Math.exp(-4 * dt));
+    const v = this.pos.clone().sub(before), sp = v.length() / Math.max(dt, 1e-3);
+    if (sp > 0.05) this.yaw += Math.atan2(Math.sin(Math.atan2(v.x, v.z) - this.yaw), Math.cos(Math.atan2(v.x, v.z) - this.yaw)) * (1 - Math.exp(-8 * dt));
+    this.group.position.copy(this.pos);
+    this.group.rotation.y = this.yaw;
+    const hop = this.flyer ? 0.35 + Math.sin(this.t * 3) * 0.08 : Math.abs(Math.sin(this.t * 11)) * Math.min(1, sp) * 0.08;
+    this.body.position.y = hop;
+    if (this.tail) this.tail.rotation.z = Math.sin(this.t * (sp > 0.2 ? 14 : 5)) * 0.5;
+    if (this.wings) this.wings.forEach((w, i) => { w.rotation.y = (i ? -1 : 1) * (0.4 + Math.sin(this.t * 16) * 0.5); });
+    this.pupils?.forEach((p, i) => { p.position.x += (Math.sin(this.t * 2 + i) * 0.006 - 0) * dt; });
   }
 }

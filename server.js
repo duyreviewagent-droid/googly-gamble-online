@@ -1,4 +1,4 @@
-// Googly Gamble Online — lobby + casino server. Play money only.
+// Googly Gamble — lobby + casino server. Play money only.
 // The server owns every dollar and every random number; clients only animate results.
 import http from 'node:http';
 import fs from 'node:fs';
@@ -9,7 +9,7 @@ import { WebSocketServer } from 'ws';
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 8000);
 const MAX_PLAYERS = 8;
-const NIGHT_SEC = Number(process.env.NIGHT_SEC || 150);
+const NIGHT_SEC = Number(process.env.NIGHT_SEC || 300);
 const BREAK_SEC = 12;
 const START_CASH = 1000;
 
@@ -86,6 +86,15 @@ const fieldPay = t => t === 2 ? 2 : t === 12 ? 3 : [3, 4, 9, 10, 11].includes(t)
 
 const DRINKS = { lemon: 50, fizz: 100, gold: 200 };
 
+// Month prizes: 1st 1000 coins, 2nd 500, 3rd 200, then each place gets half the one before.
+const coinsFor = place => place === 0 ? 1000 : place === 1 ? 500 : Math.max(1, Math.floor(200 / Math.pow(2, place - 2)));
+// Cosmetics are chosen from the shop on the client; the server only relays ids it knows the shape of.
+const cleanOutfit = o => {
+  const out = {};
+  for (const k of ['shirt', 'pants', 'hat', 'pet']) if (o && typeof o[k] === 'string' && /^[a-z0-9]{1,16}$/.test(o[k])) out[k] = o[k];
+  return out;
+};
+
 // ---------------------------------------------------------------- rooms
 const rooms = new Map();
 const clients = new Map();
@@ -105,7 +114,7 @@ function roomState(room) {
   return {
     t: 'room', code: room.code, name: room.name, host: room.host, max: room.max, state: room.state, nights: room.nights, night: room.night, phase: room.phase,
     timeLeft: Math.max(0, Math.round(room.phaseEnd - Date.now()) / 1000),
-    players: [...room.players.values()].map(p => ({ id: p.id, name: p.name, color: p.color, cash: p.cash, bankrupt: p.bankrupt, nightStart: p.nightStart, best: p.best, boosts: p.boosts })),
+    players: [...room.players.values()].map(p => ({ id: p.id, name: p.name, color: p.color, outfit: p.outfit || {}, cash: p.cash, bankrupt: p.bankrupt, done: !!p.doneTonight, ready: !!p.ready, nightStart: p.nightStart, best: p.best, boosts: p.boosts })),
   };
 }
 function syncRoom(room) { broadcast(room, roomState(room)); }
@@ -138,6 +147,7 @@ function leaveRoom(c) {
   pushLists();
 }
 function resetPlayer(c, lateJoin) {
+  c.doneTonight = false; c.ready = false;
   c.cash = START_CASH; c.nightStart = START_CASH; c.best = 0; c.bankrupt = false;
   c.bj = null; c.craps = { point: 0 }; c.boosts = { lemon: 0, gold: 0, fizz: false };
   c.where = 'lobby'; c.x = (Math.random() - 0.5) * 6; c.z = 2 + Math.random() * 2; c.yaw = Math.PI; c.moving = 0;
@@ -163,18 +173,25 @@ function beginPhase(room, phase, sec) {
 function standings(room) {
   return [...room.players.values()].map(p => ({ id: p.id, name: p.name, color: p.color, cash: p.cash, tonight: p.cash - p.nightStart, bankrupt: p.bankrupt })).sort((a, b) => b.cash - a.cash);
 }
+const active = room => [...room.players.values()].filter(p => !p.bankrupt);
+function endNightNow(room) { room.phaseEnd = 0; tickRoom(room); }
 function tickRoom(room) {
+  if (room.phase === 'night' && active(room).length && active(room).every(p => p.doneTonight)) room.phaseEnd = 0;
+  if (room.phase === 'break' && [...room.players.values()].every(p => p.ready)) room.phaseEnd = 0;
   if (Date.now() < room.phaseEnd) return;
   if (room.phase === 'night') {
     // finish any open blackjack hands by standing
     for (const p of room.players.values()) if (p.bj) bjFinish(p, true);
     const last = room.night >= room.nights;
-    broadcast(room, { t: 'nightEnd', night: room.night, nights: room.nights, standings: standings(room), final: last });
+    const st = standings(room);
+    if (last) st.forEach((s, i) => { s.coins = coinsFor(i); });
+    broadcast(room, { t: 'nightEnd', night: room.night, nights: room.nights, standings: st, final: last });
     if (last) { room.state = 'ended'; room.phase = 'ended'; clearInterval(room.timer); syncRoom(room); pushLists(); return; }
-    beginPhase(room, 'break', BREAK_SEC);
+    for (const p of room.players.values()) p.ready = false;
+    beginPhase(room, 'break', 1e9);   // waits for everyone to press READY
   } else if (room.phase === 'break') {
     room.night++;
-    for (const p of room.players.values()) { p.nightStart = p.cash; p.boosts.fizz = false; p.x = (Math.random() - 0.5) * 4; p.z = 12; }
+    for (const p of room.players.values()) { p.doneTonight = false; p.ready = false; p.nightStart = p.cash; p.boosts.fizz = false; p.x = (Math.random() - 0.5) * 4; p.z = 12; }
     beginPhase(room, 'night', NIGHT_SEC);
     broadcast(room, { t: 'nightStart', night: room.night });
   }
@@ -196,6 +213,7 @@ function checkBankrupt(p) {
     p.bankrupt = true;
     broadcast(p.room, { t: 'chat', system: true, text: `💸 ${p.name} went BANKRUPT!` });
     send(p, { t: 'bankrupt' });
+    tickRoom(p.room);
   }
 }
 const take = (p, amt) => { amt = Math.floor(amt); if (!(amt > 0) || p.cash < amt) return false; p.cash -= amt; return true; };
@@ -322,14 +340,27 @@ wss.on('connection', ws => {
       case 'hello':
         c.name = String(m.name || 'Googly').replace(/[<>]/g, '').trim().slice(0, 14) || 'Googly';
         c.color = /^#[0-9a-f]{6}$/i.test(m.color) ? m.color : '#2f7bff';
+        c.outfit = cleanOutfit(m.outfit);
         send(c, { t: 'rooms', list: roomList() });
         break;
       case 'list': send(c, { t: 'rooms', list: roomList() }); break;
+      case 'outfit':
+        c.outfit = cleanOutfit(m.outfit);
+        if (c.room) syncRoom(c.room);
+        break;
       case 'create': {
         const code = code4();
-        const room = { code, name: String(m.name || `${WORDS[rnd(10)]} ${WORDS2[rnd(10)]}`).replace(/[<>]/g, '').slice(0, 24), public: m.public !== false, max: Math.min(MAX_PLAYERS, Math.max(2, m.max | 0 || MAX_PLAYERS)), host: c.id, players: new Map(), state: 'lobby', phase: 'lobby', nights: 7, night: 0, phaseEnd: 0, timer: null };
+        const room = { code, name: String(m.name || `${WORDS[rnd(10)]} ${WORDS2[rnd(10)]}`).replace(/[<>]/g, '').slice(0, 24), public: m.public !== false, max: Math.min(MAX_PLAYERS, Math.max(1, m.max | 0 || MAX_PLAYERS)), host: c.id, players: new Map(), state: 'lobby', phase: 'lobby', nights: 7, night: 0, phaseEnd: 0, timer: null };
         rooms.set(code, room);
         joinRoom(c, room);
+        break;
+      }
+      case 'solo': {
+        const code = code4();
+        const room = { code, name: `${c.name}'s solo run`, public: false, max: 1, host: c.id, players: new Map(), state: 'lobby', phase: 'lobby', nights: 7, night: 0, phaseEnd: 0, timer: null };
+        rooms.set(code, room);
+        joinRoom(c, room);
+        startGame(room, m.nights | 0);
         break;
       }
       case 'join': {
@@ -357,9 +388,18 @@ wss.on('connection', ws => {
         break;
       case 'setMax':
         if (c.room && c.room.host === c.id) {
-          c.room.max = Math.min(MAX_PLAYERS, Math.max(2, c.room.players.size, m.max | 0));
+          c.room.max = Math.min(MAX_PLAYERS, Math.max(1, c.room.players.size, m.max | 0));
           syncRoom(c.room); pushLists();
         }
+        break;
+      case 'done':       // "done for tonight": the night ends once everyone still playing is done
+        if (c.room?.phase === 'night') { c.doneTonight = !c.doneTonight; broadcast(c.room, { t: 'chat', system: true, text: `${c.name} is ${c.doneTonight ? 'done for tonight 🛌' : 'back at the tables'}.` }); syncRoom(c.room); tickRoom(c.room); }
+        break;
+      case 'ready':
+        if (c.room?.phase === 'break') { c.ready = true; syncRoom(c.room); tickRoom(c.room); }
+        break;
+      case 'nextNight':
+        if (c.room?.phase === 'break' && c.room.host === c.id) endNightNow(c.room);
         break;
       case 'toLobby':
         if (c.room && c.room.host === c.id && c.room.state === 'ended') {
@@ -387,4 +427,4 @@ setInterval(() => {
   }
 }, 66);
 
-server.listen(PORT, () => console.log(`Googly Gamble Online on http://localhost:${PORT}`));
+server.listen(PORT, () => console.log(`Googly Gamble on http://localhost:${PORT}`));
