@@ -16,7 +16,7 @@
 <section id="scr-name" class="screen">
   <div class="card">
     <h1><span class="b">GOOGLY</span> <span class="y">GAMBLE</span></h1>
-    <p class="sub">ONLINE · up to 8 googly friends · play money only</p>
+    <p class="sub">ONLINE · play with 1–8 googly friends · play money only</p>
     <input id="nm" maxlength="14" placeholder="Your name" autocomplete="off">
     <div id="swatches"></div>
     <button id="go" class="big green">PLAY</button>
@@ -32,6 +32,7 @@
     <div id="rooms"></div>
     <div class="row">
       <input id="lobbyname" maxlength="24" placeholder="Lobby name (optional)">
+      <select id="maxp"><option value="2">2 players</option><option value="3">3 players</option><option value="4" selected>4 players</option><option value="5">5 players</option><option value="6">6 players</option><option value="7">7 players</option><option value="8">8 players</option></select>
       <label class="chk"><input type="checkbox" id="pub" checked> public</label>
       <button id="create" class="green">CREATE LOBBY</button>
     </div>
@@ -53,6 +54,7 @@
     <div id="lobbyplayers"></div>
     <div class="row">
       <button id="invite">📨 INVITE</button>
+      <select id="lobbymax"></select>
       <select id="nights"><option value="3">3 nights</option><option value="7" selected>7 nights</option><option value="30">30 nights (a month)</option></select>
       <button id="start" class="green">START ▶</button>
       <button id="leave" class="grey">LEAVE</button>

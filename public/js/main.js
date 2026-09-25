@@ -87,7 +87,7 @@ function renderRooms(list) {
     row.append(b); el.append(row);
   }
 }
-$('create').onclick = () => { sfx.click(); send({ t: 'create', name: $('lobbyname').value.trim(), public: $('pub').checked }); };
+$('create').onclick = () => { sfx.click(); send({ t: 'create', name: $('lobbyname').value.trim(), public: $('pub').checked, max: +$('maxp').value }); };
 $('joincode').onclick = () => { sfx.click(); send({ t: 'join', code: $('code').value.trim().toUpperCase() }); };
 $('code').addEventListener('keydown', e => { if (e.key === 'Enter') $('joincode').click(); });
 $('back').onclick = () => { show('scr-name'); ws?.close(); ws = null; };
@@ -110,7 +110,7 @@ function onRoom(m) {
   }
   // leaderboard
   const sorted = [...m.players].sort((a, b) => b.cash - a.cash);
-  $('board').innerHTML = `<div style="color:#ffd84a;font-size:11px">${esc(m.name)} · ${m.players.length}/8</div>` + sorted.map((q, i) =>
+  $('board').innerHTML = `<div style="color:#ffd84a;font-size:11px">${esc(m.name)} · ${m.players.length}/${m.max}</div>` + sorted.map((q, i) =>
     `<div class="${q.id === myId ? 'me' : ''} ${q.bankrupt ? 'dead' : ''}"><span>${i + 1}. <span class="dot" style="background:${q.color}"></span>${esc(q.name)}${q.id === m.host ? ' 👑' : ''}</span><span>${money(q.cash)}</span></div>`).join('');
   // lobby bar
   const inLobby = m.state === 'lobby';
@@ -120,8 +120,13 @@ function onRoom(m) {
     $('lobbyinfo').textContent = `${m.name} · CODE ${m.code}`;
     $('lobbyplayers').innerHTML = m.players.map(q => `<span style="color:${q.color};margin:0 6px">● ${esc(q.name)}${q.id === m.host ? ' 👑' : ''}</span>`).join('');
     const host = m.host === myId;
-    $('start').classList.toggle('hidden', !host); $('nights').classList.toggle('hidden', !host);
-    $('waiting').textContent = host ? `You're the host — press START when everyone's in (${m.players.length}/8).` : 'Waiting for the host to start the game…';
+    $('start').classList.toggle('hidden', !host); $('nights').classList.toggle('hidden', !host); $('lobbymax').classList.toggle('hidden', !host);
+    const sel = $('lobbymax');
+    if (sel.dataset.v !== `${m.max}/${m.players.length}`) {
+      sel.dataset.v = `${m.max}/${m.players.length}`;
+      sel.innerHTML = [2, 3, 4, 5, 6, 7, 8].filter(n => n >= m.players.length).map(n => `<option value="${n}" ${n === m.max ? 'selected' : ''}>max ${n}</option>`).join('');
+    }
+    $('waiting').textContent = host ? `You're the host — START whenever you like, even solo (${m.players.length}/${m.max} here).` : `Waiting for the host to start… (${m.players.length}/${m.max})`;
   }
   // name tags on others show their money in the casino
   for (const q of m.players) {
@@ -130,6 +135,7 @@ function onRoom(m) {
   }
   updateClock();
 }
+$('lobbymax').onchange = () => send({ t: 'setMax', max: +$('lobbymax').value });
 $('start').onclick = () => { sfx.click(); send({ t: 'start', nights: +$('nights').value }); };
 $('leave').onclick = () => leaveRoom();
 $('invite').onclick = async () => {
@@ -195,7 +201,7 @@ function toast(text, color = '#fff') { const t = $('toast'); t.textContent = tex
 function updateClock() {
   const el = $('topleft');
   if (!room) return;
-  if (room.state === 'lobby') { el.innerHTML = `LOBBY<span class="clock">${room.players.length}/8 players</span>`; return; }
+  if (room.state === 'lobby') { el.innerHTML = `LOBBY<span class="clock">${room.players.length}/${room.max} players</span>`; return; }
   if (room.state === 'ended') { el.innerHTML = `MONTH OVER<span class="clock">final results</span>`; return; }
   const left = Math.max(0, (room.phaseEndLocal || 0) - performance.now()) / 1000;
   const total = room.phase === 'night' ? (room.nightSec || 150) : 12;

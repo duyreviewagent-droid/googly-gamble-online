@@ -97,13 +97,13 @@ const code4 = () => { const a = 'ABCDEFGHJKLMNPQRSTUVWXYZ'; let s = ''; for (let
 function send(c, msg) { if (c.ws.readyState === 1) c.ws.send(JSON.stringify(msg)); }
 function broadcast(room, msg) { const s = JSON.stringify(msg); for (const c of room.players.values()) if (c.ws.readyState === 1) c.ws.send(s); }
 function roomList() {
-  return [...rooms.values()].filter(r => r.public).map(r => ({ code: r.code, name: r.name, count: r.players.size, max: MAX_PLAYERS, state: r.state, host: r.players.get(r.host)?.name || '?', nights: r.nights }));
+  return [...rooms.values()].filter(r => r.public).map(r => ({ code: r.code, name: r.name, count: r.players.size, max: r.max, state: r.state, host: r.players.get(r.host)?.name || '?', nights: r.nights }));
 }
 function pushLists() { const list = roomList(); for (const c of clients.values()) if (!c.room) send(c, { t: 'rooms', list }); }
 function net(p) { return p.cash; }
 function roomState(room) {
   return {
-    t: 'room', code: room.code, name: room.name, host: room.host, state: room.state, nights: room.nights, night: room.night, phase: room.phase,
+    t: 'room', code: room.code, name: room.name, host: room.host, max: room.max, state: room.state, nights: room.nights, night: room.night, phase: room.phase,
     timeLeft: Math.max(0, Math.round(room.phaseEnd - Date.now()) / 1000),
     players: [...room.players.values()].map(p => ({ id: p.id, name: p.name, color: p.color, cash: p.cash, bankrupt: p.bankrupt, nightStart: p.nightStart, best: p.best, boosts: p.boosts })),
   };
@@ -112,7 +112,7 @@ function syncRoom(room) { broadcast(room, roomState(room)); }
 
 function joinRoom(c, room) {
   if (process.env.DEBUG) console.log('join', c.id, c.name, room.code);
-  if (room.players.size >= MAX_PLAYERS) return send(c, { t: 'error', msg: 'That lobby is full (8/8).' });
+  if (room.players.size >= room.max) return send(c, { t: 'error', msg: `That lobby is full (${room.max}/${room.max}).` });
   leaveRoom(c);
   c.room = room;
   resetPlayer(c, room.state === 'playing');
@@ -327,7 +327,7 @@ wss.on('connection', ws => {
       case 'list': send(c, { t: 'rooms', list: roomList() }); break;
       case 'create': {
         const code = code4();
-        const room = { code, name: String(m.name || `${WORDS[rnd(10)]} ${WORDS2[rnd(10)]}`).replace(/[<>]/g, '').slice(0, 24), public: m.public !== false, host: c.id, players: new Map(), state: 'lobby', phase: 'lobby', nights: 7, night: 0, phaseEnd: 0, timer: null };
+        const room = { code, name: String(m.name || `${WORDS[rnd(10)]} ${WORDS2[rnd(10)]}`).replace(/[<>]/g, '').slice(0, 24), public: m.public !== false, max: Math.min(MAX_PLAYERS, Math.max(2, m.max | 0 || MAX_PLAYERS)), host: c.id, players: new Map(), state: 'lobby', phase: 'lobby', nights: 7, night: 0, phaseEnd: 0, timer: null };
         rooms.set(code, room);
         joinRoom(c, room);
         break;
@@ -354,6 +354,12 @@ wss.on('connection', ws => {
       }
       case 'start':
         if (c.room && c.room.host === c.id && c.room.state === 'lobby') startGame(c.room, m.nights | 0);
+        break;
+      case 'setMax':
+        if (c.room && c.room.host === c.id) {
+          c.room.max = Math.min(MAX_PLAYERS, Math.max(2, c.room.players.size, m.max | 0));
+          syncRoom(c.room); pushLists();
+        }
         break;
       case 'toLobby':
         if (c.room && c.room.host === c.id && c.room.state === 'ended') {
