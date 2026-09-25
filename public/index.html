@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#1a0610">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Googly Gamble Online</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">{ "imports": { "three": "/three/three.module.js" } }</script>
+</head>
+<body>
+<canvas id="view"></canvas>
+
+<!-- name + colour -->
+<section id="scr-name" class="screen">
+  <div class="card">
+    <h1><span class="b">GOOGLY</span> <span class="y">GAMBLE</span></h1>
+    <p class="sub">ONLINE · up to 8 googly friends · play money only</p>
+    <input id="nm" maxlength="14" placeholder="Your name" autocomplete="off">
+    <div id="swatches"></div>
+    <button id="go" class="big green">PLAY</button>
+    <p class="tiny">No real money. Nothing can be bought or cashed out. Real casino odds: the house has an edge.</p>
+  </div>
+</section>
+
+<!-- lobby browser -->
+<section id="scr-browse" class="screen hidden">
+  <div class="card wide">
+    <h2>MULTIPLAYER</h2>
+    <p class="sub">Open lobbies from other players — jump in!</p>
+    <div id="rooms"></div>
+    <div class="row">
+      <input id="lobbyname" maxlength="24" placeholder="Lobby name (optional)">
+      <label class="chk"><input type="checkbox" id="pub" checked> public</label>
+      <button id="create" class="green">CREATE LOBBY</button>
+    </div>
+    <div class="row">
+      <input id="code" maxlength="4" placeholder="CODE" class="codebox">
+      <button id="joincode">JOIN BY CODE</button>
+      <button id="back" class="grey">BACK</button>
+    </div>
+  </div>
+</section>
+
+<!-- in-world HUD -->
+<section id="hud" class="hidden">
+  <div id="topleft" class="pill"></div>
+  <div id="cashbox" class="pill"><small>BANKROLL</small><b id="cash">$1,000</b><i id="boosts"></i></div>
+  <div id="board" class="pill"></div>
+  <div id="lobbybar" class="pill hidden">
+    <div id="lobbyinfo"></div>
+    <div id="lobbyplayers"></div>
+    <div class="row">
+      <button id="invite">📨 INVITE</button>
+      <select id="nights"><option value="3">3 nights</option><option value="7" selected>7 nights</option><option value="30">30 nights (a month)</option></select>
+      <button id="start" class="green">START ▶</button>
+      <button id="leave" class="grey">LEAVE</button>
+    </div>
+    <div id="waiting" class="tiny"></div>
+  </div>
+  <div id="prompt" class="hidden"></div>
+  <div id="chat">
+    <div id="log"></div>
+    <form id="chatform"><input id="say" maxlength="120" placeholder="Chat… (Enter)" autocomplete="off"><button>SEND</button></form>
+  </div>
+  <div id="toast"></div>
+  <div id="pops"></div>
+  <div id="stick" class="touch"><div id="knob"></div></div>
+  <button id="act" class="touch">PLAY</button>
+  <button id="menubtn" class="grey">☰</button>
+</section>
+
+<section id="panel" class="hidden"></section>
+<section id="overlay" class="hidden"></section>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

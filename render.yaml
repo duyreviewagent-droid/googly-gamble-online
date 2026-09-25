@@ -1,0 +1,10 @@
+# Googly Gamble Online on Render (free web service, WebSockets supported).
+services:
+  - type: web
+    name: googly-gamble
+    runtime: node
+    plan: free
+    buildCommand: npm ci --omit=dev
+    startCommand: node server.js
+    healthCheckPath: /
+    autoDeploy: true
