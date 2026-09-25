@@ -114,7 +114,7 @@ function roomState(room) {
   return {
     t: 'room', code: room.code, name: room.name, host: room.host, max: room.max, state: room.state, nights: room.nights, night: room.night, phase: room.phase,
     timeLeft: Math.max(0, Math.round(room.phaseEnd - Date.now()) / 1000),
-    players: [...room.players.values()].map(p => ({ id: p.id, name: p.name, color: p.color, outfit: p.outfit || {}, cash: p.cash, bankrupt: p.bankrupt, done: !!p.doneTonight, ready: !!p.ready, nightStart: p.nightStart, best: p.best, boosts: p.boosts })),
+    players: [...room.players.values()].map(p => ({ id: p.id, name: p.name, color: p.color, outfit: p.outfit || {}, cash: p.cash, safe: p.safe || 0, bot: !!p.bot, bankrupt: p.bankrupt, done: !!p.doneTonight, ready: !!p.ready, nightStart: p.nightStart, best: p.best, boosts: p.boosts })),
   };
 }
 function syncRoom(room) { broadcast(room, roomState(room)); }
@@ -137,9 +137,10 @@ function leaveRoom(c) {
   if (!room) return;
   room.players.delete(c.id);
   c.room = null;
-  if (room.players.size === 0) { clearInterval(room.timer); rooms.delete(room.code); }
+  const humans = [...room.players.values()].filter(p => !p.bot);
+  if (humans.length === 0) { clearInterval(room.timer); clearInterval(room.botTimer); rooms.delete(room.code); }
   else {
-    if (room.host === c.id) { room.host = room.players.keys().next().value; broadcast(room, { t: 'chat', system: true, text: `${room.players.get(room.host).name} is the new host.` }); }
+    if (room.host === c.id) { room.host = humans[0].id; broadcast(room, { t: 'chat', system: true, text: `${room.players.get(room.host).name} is the new host.` }); }
     broadcast(room, { t: 'chat', system: true, text: `${c.name} left.` });
     broadcast(room, { t: 'gone', id: c.id });
     syncRoom(room);
@@ -147,7 +148,7 @@ function leaveRoom(c) {
   pushLists();
 }
 function resetPlayer(c, lateJoin) {
-  c.doneTonight = false; c.ready = false;
+  c.doneTonight = false; c.ready = false; c.safe = 0; c.snacked = 0;
   c.cash = START_CASH; c.nightStart = START_CASH; c.best = 0; c.bankrupt = false;
   c.bj = null; c.craps = { point: 0 }; c.boosts = { lemon: 0, gold: 0, fizz: false };
   c.where = 'lobby'; c.x = (Math.random() - 0.5) * 6; c.z = 2 + Math.random() * 2; c.yaw = Math.PI; c.moving = 0;
@@ -155,10 +156,11 @@ function resetPlayer(c, lateJoin) {
 }
 
 function startGame(room, nights) {
+  room.startCash = room.difficulty === 0 ? 1500 : START_CASH;
   room.state = 'playing';
   room.nights = [3, 7, 30].includes(nights) ? nights : 7;
   room.night = 1;
-  for (const p of room.players.values()) { resetPlayer(p, true); p.x = (Math.random() - 0.5) * 4; p.z = 12; }
+  for (const p of room.players.values()) { resetPlayer(p, true); p.cash = p.nightStart = p.bot ? START_CASH : room.startCash; p.x = (Math.random() - 0.5) * 4; p.z = 12; if (p.bot) botNewNight(p); }
   beginPhase(room, 'night', NIGHT_SEC);
   broadcast(room, { t: 'start' });
   syncRoom(room);
@@ -171,13 +173,13 @@ function beginPhase(room, phase, sec) {
   room.timer = setInterval(() => tickRoom(room), 250);
 }
 function standings(room) {
-  return [...room.players.values()].map(p => ({ id: p.id, name: p.name, color: p.color, cash: p.cash, tonight: p.cash - p.nightStart, bankrupt: p.bankrupt })).sort((a, b) => b.cash - a.cash);
+  return [...room.players.values()].map(p => ({ id: p.id, name: p.name, color: p.color, cash: p.cash + (p.safe || 0), tonight: p.cash + (p.safe || 0) - p.nightStart, bankrupt: p.bankrupt, bot: !!p.bot })).sort((a, b) => b.cash - a.cash);
 }
-const active = room => [...room.players.values()].filter(p => !p.bankrupt);
+const active = room => [...room.players.values()].filter(p => !p.bankrupt && !p.bot);
 function endNightNow(room) { room.phaseEnd = 0; tickRoom(room); }
 function tickRoom(room) {
   if (room.phase === 'night' && active(room).length && active(room).every(p => p.doneTonight)) room.phaseEnd = 0;
-  if (room.phase === 'break' && [...room.players.values()].every(p => p.ready)) room.phaseEnd = 0;
+  if (room.phase === 'break' && [...room.players.values()].every(p => p.ready || p.bot)) room.phaseEnd = 0;
   if (Date.now() < room.phaseEnd) return;
   if (room.phase === 'night') {
     // finish any open blackjack hands by standing
@@ -191,7 +193,7 @@ function tickRoom(room) {
     beginPhase(room, 'break', 1e9);   // waits for everyone to press READY
   } else if (room.phase === 'break') {
     room.night++;
-    for (const p of room.players.values()) { p.doneTonight = false; p.ready = false; p.nightStart = p.cash; p.boosts.fizz = false; p.x = (Math.random() - 0.5) * 4; p.z = 12; }
+    for (const p of room.players.values()) { p.doneTonight = false; p.ready = false; p.nightStart = p.cash + (p.safe || 0); if (p.bot) botNewNight(p); p.boosts.fizz = false; p.x = (Math.random() - 0.5) * 4; p.z = 12; }
     beginPhase(room, 'night', NIGHT_SEC);
     broadcast(room, { t: 'nightStart', night: room.night });
   }
@@ -209,7 +211,7 @@ function settle(p, staked, back) {
   return { net, bonus };
 }
 function checkBankrupt(p) {
-  if (p.cash < 1 && !p.bj && !p.bankrupt) {
+  if (p.cash < 1 && !(p.safe > 0) && !p.bj && !p.bankrupt) {
     p.bankrupt = true;
     broadcast(p.room, { t: 'chat', system: true, text: `💸 ${p.name} went BANKRUPT!` });
     send(p, { t: 'bankrupt' });
@@ -357,10 +359,11 @@ wss.on('connection', ws => {
       }
       case 'solo': {
         const code = code4();
-        const room = { code, name: `${c.name}'s solo run`, public: false, max: 1, host: c.id, players: new Map(), state: 'lobby', phase: 'lobby', nights: 7, night: 0, phaseEnd: 0, timer: null };
+        const room = { code, name: `${c.name}'s solo run`, public: false, max: 1, host: c.id, players: new Map(), state: 'lobby', phase: 'lobby', nights: 7, night: 0, phaseEnd: 0, timer: null, difficulty: [0, 1, 2].includes(m.difficulty) ? m.difficulty : 1 };
         rooms.set(code, room);
         joinRoom(c, room);
         startGame(room, m.nights | 0);
+        if (m.bots !== false) addBots(room);
         break;
       }
       case 'join': {
@@ -372,7 +375,7 @@ wss.on('connection', ws => {
       case 'pos':
         if (!c.room) break;
         c.x = Math.max(-25, Math.min(25, +m.x || 0)); c.z = Math.max(-25, Math.min(25, +m.z || 0)); c.yaw = +m.yaw || 0; c.moving = m.moving ? 1 : 0;
-        c.where = m.where === 'casino' ? 'casino' : 'lobby'; c.anim = m.anim | 0;
+        c.where = ['casino', 'hotel'].includes(m.where) ? m.where : 'lobby'; c.anim = m.anim | 0;
         break;
       case 'chat': {
         if (!c.room) break;
@@ -401,6 +404,19 @@ wss.on('connection', ws => {
       case 'nextNight':
         if (c.room?.phase === 'break' && c.room.host === c.id) endNightNow(c.room);
         break;
+      case 'safe': {       // the hotel-room safe: counts in the standings, can't be bet
+        const r = c.room;
+        if (!r || r.state !== 'playing' || r.phase !== 'break') return send(c, { t: 'error', msg: 'The safe is in your hotel room.' });
+        const amt = Math.floor(m.amt);
+        if (m.op === 'dep' && amt > 0 && c.cash >= amt) { c.cash -= amt; c.safe += amt; }
+        else if (m.op === 'wd' && amt > 0 && c.safe >= amt) { c.safe -= amt; c.cash += amt; }
+        send(c, { t: 'safe', cash: c.cash, safe: c.safe });
+        syncRoom(r);
+        break;
+      }
+      case 'snack':
+        if (c.room?.phase === 'break' && c.snacked !== c.room.night) { c.snacked = c.room.night; c.boosts.lemon += 3; send(c, { t: 'snack' }); syncRoom(c.room); }
+        break;
       case 'toLobby':
         if (c.room && c.room.host === c.id && c.room.state === 'ended') {
           const r = c.room; r.state = 'lobby'; r.phase = 'lobby';
@@ -422,9 +438,154 @@ wss.on('connection', ws => {
 // positions at 15 Hz
 setInterval(() => {
   for (const room of rooms.values()) {
-    const snap = [...room.players.values()].map(p => [p.id, +p.x.toFixed(2), +p.z.toFixed(2), +p.yaw.toFixed(2), p.moving, p.where === 'casino' ? 1 : 0, p.anim | 0]);
+    const snap = [...room.players.values()].map(p => [p.id, +p.x.toFixed(2), +p.z.toFixed(2), +p.yaw.toFixed(2), p.moving, p.where === 'casino' ? 1 : p.where === 'hotel' ? 2 : 0, p.anim | 0]);
     broadcast(room, { t: 'snap', p: snap });
   }
 }, 66);
 
 server.listen(PORT, () => console.log(`Googly Gamble on http://localhost:${PORT}`));
+
+// ---------------------------------------------------------------- computer friends (solo games)
+// Rick the high roller, Gus the careful blackjack grinder, Sunny the slot lover, Violet who doubles up on red.
+const BOTS = [
+  { name: 'RICK', color: '#e63946', style: 'high', outfit: { hat: 'cowboy', shirt: 'redtee', pants: 'jeans' }, fav: [['craps', 4], ['roulette', 2], ['blackjack', 2], ['slot', 0.4]] },
+  { name: 'GUS', color: '#2fb34a', style: 'grind', outfit: { hat: 'cap', shirt: 'greentee', pants: 'khaki' }, fav: [['blackjack', 5], ['craps', 2], ['roulette', 0.3]] },
+  { name: 'SUNNY', color: '#ffc93a', style: 'slots', outfit: { hat: 'beanie', shirt: 'hawaii', pants: 'shorts' }, fav: [['slot', 6], ['roulette', 0.6]] },
+  { name: 'VIOLET', color: '#9b5de5', style: 'marty', outfit: { hat: 'tophat', shirt: 'tux', pants: 'tuxpants' }, fav: [['roulette', 4], ['blackjack', 1.5], ['slot', 1]] },
+];
+// Where to stand at each game, plus the aisle route in from the corridor at z = -2 (matches the client's casino).
+const SLOT_X = [-15.6, -14.2, -12.8, -11.4, -10];
+const BOT_SPOTS = {
+  slot: [...SLOT_X.map(x => ({ x, z: -3.95, via: [[x, -2]] })), ...SLOT_X.map(x => ({ x, z: -9.95, via: [[-7.2, -2], [-7.2, -9.95]] }))],
+  blackjack: [0.55, 2.45, 6.55, 8.45].map(x => ({ x, z: -7.45, via: [[x, -2]] })),
+  roulette: [-6.8, -4.3].map(x => ({ x, z: 5.4, via: [[-2.5, -2], [-2.5, 6.3], [x, 6.3]] })),
+  craps: [4.8, 7.3].map(x => ({ x, z: 5.6, via: [[9.2, -2], [9.2, 6.4], [x, 6.4]] })),
+  bar: [-3.5, -2, 0.5, 2].map(z => ({ x: 15.4, z, via: [[15.4, -2]] })),
+};
+const ROUND_SEC = { slot: 3.5, blackjack: 8, roulette: 12, craps: 9 };
+const WIN_LINES = ['LET\'S GOOO!', 'EZ MONEY', 'WOOHOO!', "I'm on fire!", 'Cha-ching!'];
+const LOSE_LINES = ['aw man…', 'rigged!!', 'noooo', 'the house always wins', 'one more…'];
+
+function addBots(room) {
+  BOTS.forEach((b, i) => {
+    const bot = { id: 9001 + i + rnd(1e5) * 10, bot: true, ws: { readyState: 0 }, ...b, outfit: { ...b.outfit }, room };
+    resetPlayer(bot, true);
+    bot.cash = bot.nightStart = START_CASH;
+    bot.shoe = newShoe();
+    botNewNight(bot);
+    room.players.set(bot.id, bot);
+  });
+  clearInterval(room.botTimer);
+  room.botTimer = setInterval(() => botTick(room, 0.25), 250);
+  syncRoom(room);
+}
+function botNewNight(b) {
+  b.x = (Math.random() - 0.5) * 4; b.z = 12 + Math.random(); b.path = [[b.x, -2]]; b.spot = null; b.kind = null;
+  b.wait = Math.random() * 6; b.rounds = 0; b.martingale = 0; b.home = Math.random() > [0.9, 0.8, 0.75, 0.7][BOTS.findIndex(x => x.name === b.name)];
+  b.gone = b.home;
+  if (b.gone) b.where = 'lobby'; else b.where = 'casino';
+}
+function botWantsToQuit(b, diff) {
+  const base = Math.max(300, b.nightStart), today = b.cash - b.nightStart;
+  if (diff === 0) return today < -base * 0.8;                                  // easy: greedy, never cashes out ahead
+  const [lo, hi] = { high: [0.4, 0.8], grind: [0.2, 0.25], slots: [0.3, 0.4], marty: [0.35, 0.3] }[b.style];
+  const k = diff === 2 ? 0.8 : 1;
+  return today < -base * lo * k || today > base * hi * k;
+}
+function pickSpot(room, b) {
+  const diff = room.difficulty ?? 1;
+  const fav = b.fav.map(([k, w]) => [k, diff === 2 ? (k === 'blackjack' || k === 'craps' ? w * 2 : w * 0.35) : w]);
+  let r = Math.random() * fav.reduce((a, f) => a + f[1], 0);
+  let kind = fav[0][0];
+  for (const [k, w] of fav) { if (r < w) { kind = k; break; } r -= w; }
+  const taken = new Set([...room.players.values()].filter(p => p.bot && p.spot).map(p => p.spot));
+  const free = BOT_SPOTS[kind].filter(s => !taken.has(s));
+  return free.length ? [kind, free[rnd(free.length)]] : null;
+}
+function botRound(room, b) {
+  const scale = [1.6, 1, 0.75][room.difficulty ?? 1];
+  const size = (frac, lo, hi, step) => Math.min(b.cash, Math.max(lo, Math.min(hi, Math.floor(b.cash * frac * scale / step) * step)));
+  let bet = 0, back = 0;
+  switch (b.kind) {
+    case 'slot': {
+      bet = Math.min(b.cash, b.style === 'slots' ? (b.cash > 5000 ? 25 : b.cash > 2000 ? 5 : 1) : 5);
+      const sy = [rnd(22), rnd(22), rnd(22)].map((st, i) => REELS[i][st]);
+      back = slotPay(...sy) * bet;
+      break;
+    }
+    case 'blackjack': {
+      bet = b.style === 'high' ? size(0.08, 25, 5000, 25) : b.style === 'grind' ? size(0.025, 10, 500, 5) : size(0.03, 5, 500, 5);
+      const pl = [draw(b.shoe), draw(b.shoe)], dl = [draw(b.shoe), draw(b.shoe)];
+      const up = Math.min(10, dl[0].r === 1 ? 11 : dl[0].r);
+      while (total(pl) < 12 || (total(pl) < 17 && up >= 7)) pl.push(draw(b.shoe));     // roughly the book
+      const pt = total(pl);
+      if (pt <= 21) while (total(dl) < 17) dl.push(draw(b.shoe));
+      const dt = total(dl);
+      back = isBJ(pl) && !isBJ(dl) ? bet * 2.5 : pt > 21 ? 0 : dt > 21 || pt > dt ? bet * 2 : pt === dt ? bet : 0;
+      back = Math.floor(back);
+      break;
+    }
+    case 'roulette': {
+      const num = WHEEL[rnd(38)];
+      if (b.style === 'marty') { bet = Math.min(b.cash, 5 << Math.min(b.martingale, 6)); if (REDS.has(num) && num !== 37) { back = bet * 2; b.martingale = 0; } else b.martingale = (b.martingale + 1) % 7; }
+      else {
+        bet = b.style === 'high' ? size(0.04, 25, 5000, 25) : size(0.02, 5, 200, 5);
+        const straight = b.style === 'high' && Math.random() < 0.15, n = WHEEL[rnd(38)];
+        back = straight ? (num === n ? bet * 36 : 0) : rlWins('red', 0, num) ? bet * 2 : 0;
+      }
+      break;
+    }
+    case 'craps': {
+      bet = b.style === 'high' ? size(0.06, 25, 2000, 25) : size(0.025, 5, 300, 5);
+      let d = 1 + rnd(6) + 1 + rnd(6);
+      if (d === 7 || d === 11) back = bet * 2;
+      else if (![2, 3, 12].includes(d)) { const pt = d; while (true) { d = 1 + rnd(6) + 1 + rnd(6); if (d === pt) { back = bet * 2; break; } if (d === 7) break; } }
+      break;
+    }
+  }
+  if (!(bet > 0) || bet > b.cash) return;
+  b.cash += back - bet;
+  const net = back - bet;
+  if (net > b.best) b.best = net;
+  broadcast(room, { t: 'pop', id: b.id, net });
+  if ((net >= 200 || net <= -200) && Math.random() < 0.6) broadcast(room, { t: 'chat', id: b.id, name: b.name, color: b.color, text: (net > 0 ? WIN_LINES : LOSE_LINES)[rnd(5)] });
+}
+function botTick(room, dt) {
+  if (room.state !== 'playing') return;
+  let changed = false;
+  for (const b of room.players.values()) {
+    if (!b.bot || b.gone) continue;
+    if (room.phase !== 'night') { b.moving = 0; continue; }
+    if (b.path.length) {
+      const [tx, tz] = b.path[0], dx = tx - b.x, dz = tz - b.z, d = Math.hypot(dx, dz), step = 1.35 * dt;
+      b.moving = 1;
+      b.yaw = Math.atan2(dx, dz);
+      if (d <= step) { b.x = tx; b.z = tz; b.path.shift(); if (!b.path.length && b.spot) { b.yaw = b.kind === 'bar' ? Math.PI / 2 : Math.PI; b.wait = ROUND_SEC[b.kind] || 20; } }
+      else { b.x += dx / d * step; b.z += dz / d * step; }
+      continue;
+    }
+    b.moving = 0;
+    b.wait -= dt;
+    if (b.wait > 0) continue;
+    if (b.kind && b.kind !== 'bar' && b.rounds > 0) {
+      if (b.cash < 5 || botWantsToQuit(b, room.difficulty ?? 1)) {
+        b.gone = true; b.where = 'lobby';
+        broadcast(room, { t: 'chat', id: b.id, name: b.name, color: b.color, text: b.cash > b.nightStart ? "I'm cashing out while I'm ahead!" : "I'm done for tonight…" });
+        changed = true; continue;
+      }
+      botRound(room, b); changed = true;
+      b.rounds--; b.wait = (ROUND_SEC[b.kind] || 8) * (0.8 + Math.random() * 0.5);
+      if (b.rounds > 0) continue;
+    }
+    // choose what next: another game, or a break at the bar
+    const back = b.spot ? [...b.spot.via].reverse() : [];
+    const goBar = b.kind && b.kind !== 'bar' && Math.random() < 0.5;
+    const pick = goBar ? ['bar', BOT_SPOTS.bar[rnd(4)]] : pickSpot(room, b);
+    if (!pick) { b.wait = 5; continue; }
+    [b.kind, b.spot] = pick;
+    b.rounds = b.kind === 'bar' ? 0 : 4 + rnd(9);
+    b.path = [...back, ...b.spot.via, [b.spot.x, b.spot.z]];
+    if (b.kind === 'bar') b.wait = 20 + Math.random() * 25;
+  }
+  if (changed) syncRoom(room);
+}

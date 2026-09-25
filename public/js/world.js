@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 
 export const LOBBY_OFF = new THREE.Vector3(-80, 0, 0);
+export const HOTEL_OFF = new THREE.Vector3(80, 0, 0);
+export const STREET_OFF = new THREE.Vector3(0, 0, 90);
 
 // ------------------------------------------------------------------ helpers
 function canvasTex(w, h, draw, repeat) {
@@ -244,6 +246,8 @@ export class World {
     this.neons = [];
     this.buildCasino();
     this.buildLobby();
+    this.buildHotel();
+    this.buildStreet();
     this.canvas = canvas;
     this.resize();
     addEventListener('resize', () => this.resize());
@@ -389,7 +393,8 @@ export class World {
     }
     // pillars
     for (const [x, z] of [[-8, -8], [-8, 9], [11, -8], [11, 9]]) { cyl(0.42, 5.2, std(0x151515, 0.15, 0.2), x, 2.6, z, C); cyl(0.52, 0.25, std(0xc9a24a, 0.25, 1), x, 0.12, z, C); bl.push({ cx: x, cz: z, r: 0.55 }); }
-    this.bounds = { casino: { x0: -17.6, x1: 17.6, z0: -12.6, z1: 12.6 }, lobby: { x0: -8.6, x1: 8.6, z0: -6.6, z1: 6.6 } };
+    this.bounds = { casino: { x0: -17.6, x1: 17.6, z0: -12.6, z1: 12.6 }, lobby: { x0: -8.6, x1: 8.6, z0: -6.6, z1: 6.6 }, hotel: { x0: -4.3, x1: 4.3, z0: -3.3, z1: 3.3 } };
+    this.blockers.hotel = [];
   }
 
   buildLobby() {
@@ -417,8 +422,98 @@ export class World {
     this.blockers.lobby.push({ cx: 0, cz: 1, r: 1.45 });
   }
 
+  buildHotel() {
+    const H = this.hotel = new THREE.Group(); H.position.copy(HOTEL_OFF); this.scene.add(H);
+    const W = 9, D = 7, Ht = 3;
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), std(0x8a7a66, 0.95)); floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; H.add(floor);
+    const ceil = new THREE.Mesh(new THREE.PlaneGeometry(W, D), std(0xe8e0d0, 0.9)); ceil.rotation.x = Math.PI / 2; ceil.position.y = Ht; H.add(ceil);
+    const wall = std(0xa89a80, 0.9), wood = std(0x4a2410, 0.45, 0, { map: woodTex() });
+    for (const [len, x, z, ry] of [[W, 0, -D / 2, 0], [W, 0, D / 2, Math.PI], [D, -W / 2, 0, Math.PI / 2], [D, W / 2, 0, -Math.PI / 2]]) {
+      const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = ry; H.add(g);
+      const p = new THREE.Mesh(new THREE.PlaneGeometry(len, Ht), wall); p.position.y = Ht / 2; g.add(p);
+      box(len, 0.12, 0.03, wood, 0, 0.06, 0.015, g);
+    }
+    // the window: a city at night with the casino glowing
+    const city = canvasTex(1024, 430, (g) => {
+      const gr = g.createLinearGradient(0, 0, 0, 430); gr.addColorStop(0, '#05081a'); gr.addColorStop(0.7, '#1a1f4a'); gr.addColorStop(1, '#4a2a5a'); g.fillStyle = gr; g.fillRect(0, 0, 1024, 430);
+      g.fillStyle = '#fff'; for (let i = 0; i < 120; i++) g.fillRect(Math.random() * 1024, Math.random() * 200, 2, 2);
+      g.fillStyle = '#fff6d8'; g.beginPath(); g.arc(830, 70, 30, 0, 7); g.fill();
+      let x = 0; while (x < 1024) { const w = 40 + Math.random() * 70, h = 90 + Math.random() * 230, top = 430 - h; g.fillStyle = '#0b0d18'; g.fillRect(x, top, w, h);
+        for (let wy = top + 10; wy < 425; wy += 14) for (let wx = x + 6; wx < x + w - 6; wx += 11) if (Math.random() < 0.45) { g.fillStyle = Math.random() < 0.8 ? '#ffd58a' : '#9ad0ff'; g.fillRect(wx, wy, 5, 7); }
+        x += w + 2 + Math.random() * 8; }
+      g.font = '900 30px sans-serif'; g.fillStyle = '#ffc93a'; g.textAlign = 'center'; g.fillText('GOOGLY GRAND', 300, 250);
+    });
+    const win = new THREE.Mesh(new THREE.PlaneGeometry(5, 2.1), new THREE.MeshBasicMaterial({ map: city })); win.position.set(0, 1.55, -D / 2 + 0.02); H.add(win);
+    for (const x of [-2.9, 2.9]) box(0.7, 2.8, 0.12, std(0x7a1f2b, 0.9), x, 1.45, -D / 2 + 0.1, H);
+    // bed
+    box(2.2, 0.35, 2.3, wood, -3.35, 0.18, -0.8, H); box(2.1, 0.25, 2.2, std(0xffffff, 0.8), -3.35, 0.48, -0.8, H);
+    box(1.5, 0.12, 2.24, std(0x2f5fb8, 0.85), -3.05, 0.62, -0.8, H); box(0.12, 1.2, 2.4, wood, -4.47, 0.6, -0.8, H);
+    for (const z of [-1.3, -0.3]) box(0.4, 0.16, 0.8, std(0xf4f2ea, 0.8), -4.1, 0.68, z, H);
+    this.blockers.hotel.push({ x0: -4.5, z0: -2.0, x1: -2.2, z1: 0.4 });
+    box(0.6, 0.55, 0.5, wood, -4.15, 0.27, 0.8, H);
+    const lamp = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.25, 16, 1, true), glowMat(0xfff0c8, 1.2)); lamp.position.set(-4.15, 1.05, 0.8); H.add(lamp);
+    // TV on a dresser, fridge, safe, desk
+    box(0.6, 0.85, 1.9, wood, 4.15, 0.43, -0.5, H);
+    this.tvCanvas = document.createElement('canvas'); this.tvCanvas.width = 512; this.tvCanvas.height = 300;
+    this.tvTex = new THREE.CanvasTexture(this.tvCanvas); this.tvTex.colorSpace = THREE.SRGBColorSpace;
+    const tv = new THREE.Mesh(new THREE.PlaneGeometry(1.45, 0.85), new THREE.MeshBasicMaterial({ map: this.tvTex })); tv.position.set(4.4, 1.55, -0.5); tv.rotation.y = -Math.PI / 2; H.add(tv);
+    box(0.06, 0.9, 1.5, std(0x111111, 0.3), 4.45, 1.55, -0.5, H);
+    this.showOnTV('GNN', ['Tonight at the Googly Grand…'], '#d6283a');
+    this.blockers.hotel.push({ x0: 3.8, z0: -1.5, x1: 4.5, z1: 0.5 });
+    box(0.6, 0.75, 0.6, std(0xe8e8ec, 0.3, 0.3), 4.15, 0.38, 1.4, H); this.blockers.hotel.push({ x0: 3.8, z0: 1.05, x1: 4.5, z1: 1.75 });
+    box(0.5, 0.5, 0.5, std(0x4a4f58, 0.35, 0.8), 3.6, 0.25, 3.15, H); box(0.12, 0.08, 0.01, glowMat(0x4dff88, 1), 3.75, 0.42, 2.89, H);
+    this.blockers.hotel.push({ x0: 3.3, z0: 2.85, x1: 3.9, z1: 3.5 });
+    box(1.6, 0.05, 0.7, wood, -3.3, 0.75, 3.0, H); box(0.4, 0.26, 0.02, glowMat(0x5aa0ff, 0.9), -3.3, 0.92, 3.18, H);
+    this.blockers.hotel.push({ x0: -4.2, z0: 2.55, x1: -2.4, z1: 3.5 });
+    const rug = new THREE.Mesh(new THREE.PlaneGeometry(3, 2), std(0x8a2f3a, 0.95)); rug.rotation.x = -Math.PI / 2; rug.position.set(0.3, 0.005, 0.5); H.add(rug);
+    for (const [x, z, c, i] of [[-3.5, 0.5, 0xffd8a0, 10], [2, 1, 0xffe4c0, 12], [0, -2.6, 0x8aa8ff, 6]]) { const l = new THREE.PointLight(c, i, 9, 1.6); l.position.set(x, 2.3, z); H.add(l); }
+    const st = (kind, x, z, yaw, title) => this.stations.push({ kind, where: 'hotel', x, z, yaw, title });
+    st('bed', -1.8, -0.8, -Math.PI / 2, 'SLEEP → next night'); st('tv', 2.4, -0.5, Math.PI / 2, 'WATCH THE NEWS');
+    st('fridge', 3.1, 1.4, Math.PI / 2, 'MINI-FRIDGE SNACK'); st('safe', 3.6, 2.2, 0, 'ROOM SAFE'); st('window', 0.4, -2.6, Math.PI, 'LOOK OUT THE WINDOW');
+  }
+  showOnTV(title, lines, color = '#d6283a') {
+    const g = this.tvCanvas.getContext('2d');
+    const gr = g.createLinearGradient(0, 0, 0, 300); gr.addColorStop(0, color); gr.addColorStop(1, '#05060c'); g.fillStyle = gr; g.fillRect(0, 0, 512, 300);
+    g.fillStyle = color; g.fillRect(0, 0, 512, 46); g.fillStyle = '#fff'; g.font = '900 26px sans-serif'; g.textAlign = 'center'; g.fillText(title, 256, 32);
+    g.font = '700 20px sans-serif'; lines.slice(0, 6).forEach((l, i) => g.fillText(l, 256, 86 + i * 32));
+    g.fillStyle = '#ffd84a'; g.fillRect(0, 272, 512, 28); g.fillStyle = '#000'; g.font = '800 14px sans-serif'; g.fillText('GOOGLY NEWS NETWORK · PLAY MONEY ONLY', 256, 291);
+    this.tvTex.needsUpdate = true;
+  }
+
+  buildStreet() {
+    const S = this.street = new THREE.Group(); S.position.copy(STREET_OFF); this.scene.add(S);
+    const road = new THREE.Mesh(new THREE.PlaneGeometry(120, 10), std(0x151518, 0.7)); road.rotation.x = -Math.PI / 2; S.add(road);
+    for (let x = -55; x < 60; x += 4) box(2, 0.01, 0.15, glowMat(0xd9b43a, 0.5), x, 0.01, 0, S);
+    for (const z of [-6.5, 6.5]) box(120, 0.18, 3, std(0x3a3a40, 0.9), 0, 0.09, z, S);
+    let x = -55;
+    while (x < 60) {
+      const w = 5 + Math.random() * 6, h = 8 + Math.random() * 18;
+      const tex = canvasTex(128, 256, (g) => { g.fillStyle = '#16171f'; g.fillRect(0, 0, 128, 256); for (let y = 6; y < 250; y += 17) for (let xx = 6; xx < 120; xx += 15) { g.fillStyle = Math.random() < 0.5 ? (Math.random() < 0.8 ? '#ffd58a' : '#9ad0ff') : '#0a0b10'; g.fillRect(xx, y, 9, 11); } });
+      const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, 6), new THREE.MeshStandardMaterial({ map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.8 }));
+      b.position.set(x + w / 2, h / 2, -11); S.add(b);
+      x += w + 0.3 + Math.random() * 1.2;
+    }
+    for (let sx = -50; sx <= 60; sx += 12) { cyl(0.08, 5, std(0x2a2a30, 0.5, 0.8), sx, 2.5, -5.3, S); box(0.5, 0.1, 0.3, glowMat(0xffd9a0, 3), sx, 4.93, -4.6, S); }
+    for (const lx of [-30, 5, 40]) { const l = new THREE.PointLight(0xffd9a0, 60, 26, 1.4); l.position.set(lx, 5, -3); S.add(l); }
+    neonPlane('GOOGLY GRAND CASINO', '#ffc93a', 12, S, -38, 7, -7.9);
+    neonPlane('HOTEL GOOGLINGTON', '#5cd6ff', 12, S, 45, 7, -7.9);
+    // taxi
+    const T = this.taxi = new THREE.Group(); S.add(T);
+    const yellow = new THREE.MeshPhysicalMaterial({ color: 0xf5c518, roughness: 0.25, clearcoat: 1 });
+    box(4.2, 0.6, 1.9, yellow, 0, 0.65, 0, T);
+    box(2.3, 0.6, 1.7, new THREE.MeshStandardMaterial({ color: 0x223344, transparent: true, opacity: 0.45, roughness: 0.05 }), -0.2, 1.2, 0, T);
+    box(2.35, 0.06, 1.72, yellow, -0.2, 1.52, 0, T);
+    const sign = textSprite('TAXI', { size: 40, color: '#000', bg: '#fff6c0' }); sign.position.set(-0.2, 1.75, 0); sign.scale.multiplyScalar(0.6); T.add(sign);
+    for (const z of [-0.96, 0.96]) box(3.6, 0.1, 0.02, std(0x111111), 0, 0.72, z, T);
+    for (const [hx, c] of [[2.1, 0xfff6d8], [-2.1, 0xff2020]]) for (const z of [-0.65, 0.65]) box(0.04, 0.16, 0.34, glowMat(c, 3), hx, 0.7, z, T);
+    this.wheels = [];
+    for (const [wx, wz] of [[1.35, -0.9], [1.35, 0.9], [-1.35, -0.9], [-1.35, 0.9]]) { const w = cyl(0.38, 0.28, std(0x111111, 0.8), wx, 0.38, wz, T, 20); w.rotation.x = Math.PI / 2; this.wheels.push(w); }
+    this.taxi.position.set(-34, 0, 2.2);
+  }
+
   resolve(where, x, z, r = 0.38) {
     const b = this.bounds[where];
+    if (!b) return [x, z];
     x = Math.min(Math.max(x, b.x0 + r), b.x1 - r); z = Math.min(Math.max(z, b.z0 + r), b.z1 - r);
     for (const o of this.blockers[where]) {
       if (o.r !== undefined) {

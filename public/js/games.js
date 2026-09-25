@@ -282,3 +282,40 @@ export function bar(api) {
   api.on('drink', m => { setTimeout(() => { sfx.gulp(); }, 700); setTimeout(() => { sfx.powerup(); api.cheer(); api.toast('BOOST ON!', '#ffd84a'); }, 1500); msg.textContent = 'Glug glug glug… ahh!'; });
   return el;
 }
+
+// ---------------------------------------------------------------- hotel room
+export function safe(api) {
+  const el = $(`<div><h3>ROOM SAFE 🔒</h3><div class="msg"></div><p class="note">Money in the safe still counts in the standings, but you can't gamble it. Lock in your winnings!</p></div>`);
+  const msg = el.querySelector('.msg');
+  const show = () => { msg.innerHTML = `In the safe: <b>${money(api.safe())}</b> · in your pocket: <b>${money(api.cash())}</b>`; };
+  show();
+  const row = $(`<div class="row"></div>`);
+  for (const [label, op, amt, cls] of [['DEPOSIT $100', 'dep', 100, 'green'], ['DEPOSIT $500', 'dep', 500, 'green'], ['DEPOSIT ALL', 'dep', -1, 'green'], ['TAKE $100', 'wd', 100, 'gold'], ['TAKE ALL', 'wd', -1, 'gold']]) {
+    const b = $(`<button class="${cls}">${label}</button>`);
+    b.onclick = () => { const a = amt > 0 ? amt : op === 'dep' ? api.cash() : api.safe(); if (a > 0) api.send({ t: 'safe', op, amt: a }); sfx.chips(); };
+    row.append(b);
+  }
+  row.append(api.closeBtn());
+  el.append(row);
+  api.on('safe', m => { msg.innerHTML = `In the safe: <b>${money(m.safe)}</b> · in your pocket: <b>${money(m.cash)}</b> · *beep beep* 🔒`; });
+  return el;
+}
+export function tv(api) {
+  const el = $(`<div><h3>📺 GOOGLY NEWS NETWORK</h3><div class="msg"></div></div>`);
+  const msg = el.querySelector('.msg');
+  let ch = 0;
+  const channels = () => {
+    const st = api.standings();
+    const top = st[0], deltas = st.slice().sort((a, b) => b.tonight - a.tonight);
+    return [
+      ['GNN · RECAP', [`${top.name} LEADS WITH ${money(top.cash)}`, `BIG WINNER: ${deltas[0].name} ${signed(deltas[0].tonight)}`, `ROUGH NIGHT: ${deltas.at(-1).name} ${signed(deltas.at(-1).tonight)}`], '#d6283a'],
+      ['GOOGLY WEATHER', ['Tonight: clear skies, 72°F', 'Casino forecast: 100% chance', 'the house keeps its edge', 'Tomorrow: cloudy with a chance of 7s'], '#2f6bff'],
+      ['LATE-NIGHT INFOMERCIAL', ['THE GOOGLY-EYE 3000!', 'Stick-on eyes for ANYTHING', 'Call 1-800-GOOGLY', '(not a real number)'], '#8a2be2'],
+    ];
+  };
+  const show = () => { const [t, lines, c] = channels()[ch]; api.tvShow(t, lines, c); msg.textContent = `Channel ${ch + 1} of 3 — ${t}`; };
+  show();
+  const next = $(`<button class="grey">CHANGE CHANNEL</button>`); next.onclick = () => { ch = (ch + 1) % 3; sfx.click(); show(); };
+  const row = $(`<div class="row"></div>`); row.append(next, api.closeBtn()); el.append(row);
+  return el;
+}

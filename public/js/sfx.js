@@ -8,6 +8,7 @@ export function unlockAudio() {
   master.gain.value = 0.55;
   master.connect(ctx.destination);
   startAmbience();
+  startMusic();
 }
 export function toggleMute() { muted = !muted; if (master) master.gain.value = muted ? 0 : 0.55; return muted; }
 
@@ -82,4 +83,72 @@ function startAmbience() {
     setTimeout(jingle, 800 + Math.random() * 2500);
   };
   jingle();
+}
+
+// ---------------------------------------------------------------- lounge band
+// Walking bass, electric-piano comping, brushes and ride cymbal, swung at 104 BPM.
+// Chords: ii–V–I–vi in F with a turnaround (same changes as the Mac version).
+const CHORDS = [[43, [53, 57, 60, 64]], [48, [52, 58, 62, 64]], [41, [52, 57, 60, 64]], [50, [53, 57, 60, 66]],
+                [43, [53, 58, 62, 65]], [48, [52, 55, 58, 64]], [45, [55, 60, 64, 67]], [50, [54, 57, 60, 64]]];
+let musicGain = null, mood = 'lobby', step = 0, nextT = 0, musicOn = true;
+export function setMood(m) { mood = m; if (musicGain) musicGain.gain.setTargetAtTime(m === 'hotel' ? 0.3 : m === 'casino' ? 0.42 : 0.5, now(), 0.8); }
+export function toggleMusic() { musicOn = !musicOn; if (musicGain) musicGain.gain.setTargetAtTime(musicOn ? 0.45 : 0, now(), 0.2); return musicOn; }
+function mtone(f, t0, dur, vol, type = 'sine', dest = musicGain) {
+  const o = ctx.createOscillator(), g = ctx.createGain();
+  o.type = type; o.frequency.value = f;
+  g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(vol, t0 + 0.008); g.gain.exponentialRampToValueAtTime(0.0005, t0 + dur);
+  o.connect(g); g.connect(dest); o.start(t0); o.stop(t0 + dur + 0.05);
+}
+function rhodes(f, t0, dur, vol) {
+  // two-operator FM tine
+  const car = ctx.createOscillator(), mod = ctx.createOscillator(), mg = ctx.createGain(), g = ctx.createGain();
+  car.frequency.value = f; mod.frequency.value = f;
+  mg.gain.setValueAtTime(f * 1.4, t0); mg.gain.exponentialRampToValueAtTime(f * 0.05, t0 + 0.4);
+  mod.connect(mg); mg.connect(car.frequency);
+  g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(vol, t0 + 0.01); g.gain.exponentialRampToValueAtTime(0.0005, t0 + dur);
+  car.connect(g); g.connect(musicGain);
+  car.start(t0); mod.start(t0); car.stop(t0 + dur + 0.05); mod.stop(t0 + dur + 0.05);
+}
+function brush(t0, vol, dur = 0.18, f = 4000) {
+  const n = Math.floor(ctx.sampleRate * dur), b = ctx.createBuffer(1, n, ctx.sampleRate), d = b.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2);
+  const s = ctx.createBufferSource(); s.buffer = b;
+  const fl = ctx.createBiquadFilter(); fl.type = 'highpass'; fl.frequency.value = f;
+  const g = ctx.createGain(); g.gain.value = vol;
+  s.connect(fl); fl.connect(g); g.connect(musicGain); s.start(t0);
+}
+function scheduleStep(t0) {
+  const bar = Math.floor(step / 8) % CHORDS.length, pos = step % 8;
+  const [root, voicing] = CHORDS[bar];
+  const soft = mood === 'hotel';
+  if (pos % 2 === 0) {           // walking bass on every beat
+    const q = pos / 2, next = CHORDS[(bar + 1) % CHORDS.length][0];
+    const walk = [root, root + 4 - (Math.random() < 0.5 ? 1 : 0), root + 7, next + (next > root ? -1 : 1)];
+    mtone(midi(walk[q]), t0, 0.55, 0.22); mtone(midi(walk[q] + 12), t0, 0.2, 0.05, 'triangle');
+  }
+  if (pos === 0 || pos === 3 || (pos === 6 && Math.random() < 0.4)) voicing.forEach((m, j) => rhodes(midi(m), t0 + j * 0.012, pos === 0 ? 1.4 : 0.9, soft ? 0.035 : 0.05));
+  if (!soft && (pos === 1 || pos === 4 || pos === 5) && Math.random() < 0.4) { const sc = [65, 67, 69, 70, 72, 74, 76, 77]; rhodes(midi(sc[Math.floor(Math.random() * 8)]), t0, 1.2, 0.045); }
+  if (pos % 2 === 0 || pos === 5 || pos === 1) brush(t0, pos === 2 || pos === 6 ? 0.05 : 0.025, 0.12, 7000);   // ride
+  if (pos === 2 || pos === 6) brush(t0, 0.07, 0.25, 1800);                                                  // brushed snare
+  if (pos === 0 && !soft) mtone(58, t0, 0.3, 0.18);                                                          // felt kick
+}
+export function startMusic() {
+  if (!ctx || musicGain) return;
+  musicGain = ctx.createGain(); musicGain.gain.value = 0;
+  const verb = ctx.createConvolver(), n = ctx.sampleRate * 1.6, ir = ctx.createBuffer(2, n, ctx.sampleRate);
+  for (let c = 0; c < 2; c++) { const d = ir.getChannelData(c); for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 3); }
+  verb.buffer = ir;
+  const wet = ctx.createGain(); wet.gain.value = 0.18;
+  musicGain.connect(master); musicGain.connect(verb); verb.connect(wet); wet.connect(master);
+  setMood(mood);
+  nextT = now() + 0.1;
+  const spb = 60 / 104;
+  setInterval(() => {
+    while (nextT < now() + 0.25) {
+      scheduleStep(nextT);
+      // swing: on-beats long, off-beats short
+      nextT += step % 2 === 0 ? spb * 0.62 : spb * 0.38;
+      step++;
+    }
+  }, 60);
 }

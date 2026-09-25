@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 const QS = new URLSearchParams(location.search);
 if (QS.get('shim')) window.requestAnimationFrame = f => setTimeout(() => f(performance.now()), 16);
-import { World, Googly, Pet, LOBBY_OFF } from './world.js';
+import { World, Googly, Pet, LOBBY_OFF, HOTEL_OFF, STREET_OFF } from './world.js';
 import { wardrobe, openShop, addCoins } from './shop.js';
-import { sfx, unlockAudio, toggleMute } from './sfx.js';
+import { sfx, unlockAudio, toggleMute, setMood } from './sfx.js';
 import * as Games from './games.js';
 
 const $ = id => document.getElementById(id);
@@ -81,11 +81,12 @@ function onMsg(m) {
     case 'chat': onChat(m); break;
     case 'pop': onPop(m); break;
     case 'start': enterCasino(); toast('THE DOORS ARE OPEN!', '#ffd84a'); sfx.fanfare(); closePanel(); break;
-    case 'nightStart': closeOverlay(); toast(`NIGHT ${m.night}`, '#ffd84a'); sfx.bell(); placeInCasino(); break;
+    case 'nightStart': closeOverlay(); closePanel(); sleeping = false; $('overlay').classList.add('hidden'); toast(`NIGHT ${m.night}`, '#ffd84a'); sfx.bell(); placeInCasino(); break;
     case 'nightEnd': onNightEnd(m); break;
     case 'lobby': closeOverlay(); closePanel(); enterLobby(); toast('Back in the lobby', '#8cc4ff'); break;
     case 'bankrupt': onBankrupt(); break;
     case 'kicked': inRoom = false; room = null; clearOthers(); toast('The host removed you from the lobby.', '#ff8a8a'); break;
+    case 'snack': toast('Nom! A cold pizza slice. +3 Lucky Lemonade rounds', '#ffe14d'); sfx.gulp(); me.fig.cheer(); break;
     case 'error': toast(m.msg, '#ff8a8a'); sfx.nope(); break;
   }
 }
@@ -104,7 +105,7 @@ function renderRooms(list) {
     row.append(b); el.append(row);
   }
 }
-$('solo').onclick = () => { sfx.click(); send({ t: 'solo', nights: +$('solonights').value }); };
+$('solo').onclick = () => { sfx.click(); send({ t: 'solo', nights: +$('solonights').value, difficulty: +$('solodiff').value }); };
 $('create').onclick = () => { sfx.click(); send({ t: 'create', name: $('lobbyname').value.trim(), public: $('pub').checked, max: +$('maxp').value }); };
 $('joincode').onclick = () => { sfx.click(); send({ t: 'join', code: $('code').value.trim().toUpperCase() }); };
 $('code').addEventListener('keydown', e => { if (e.key === 'Enter') $('joincode').click(); });
@@ -127,9 +128,9 @@ function onRoom(m) {
     $('boosts').textContent = [b.lemon ? `LEMONADE ×${b.lemon}` : '', b.fizz ? 'FIZZ' : '', b.gold ? `GOLDEN ×${b.gold}` : ''].filter(Boolean).join(' · ');
   }
   // leaderboard
-  const sorted = [...m.players].sort((a, b) => b.cash - a.cash);
-  $('board').innerHTML = `<div style="color:#ffd84a;font-size:11px">${esc(m.name)} · ${m.players.length}/${m.max}</div>` + sorted.map((q, i) =>
-    `<div class="${q.id === myId ? 'me' : ''} ${q.bankrupt ? 'dead' : ''}"><span>${i + 1}. <span class="dot" style="background:${q.color}"></span>${esc(q.name)}${q.id === m.host ? ' 👑' : ''}</span><span>${money(q.cash)}</span></div>`).join('');
+  const sorted = [...m.players].sort((a, b) => (b.cash + (b.safe || 0)) - (a.cash + (a.safe || 0)));
+  $('board').innerHTML = `<div style="color:#ffd84a;font-size:11px">${esc(m.name)} · ${m.players.filter(q => !q.bot).length}/${m.max}${m.players.some(q => q.bot) ? ' + 4 🤖' : ''}</div>` + sorted.map((q, i) =>
+    `<div class="${q.id === myId ? 'me' : ''} ${q.bankrupt ? 'dead' : ''}"><span>${i + 1}. <span class="dot" style="background:${q.color}"></span>${esc(q.name)}${q.bot ? ' 🤖' : ''}${q.id === m.host ? ' 👑' : ''}</span><span>${money(q.cash + (q.safe || 0))}</span></div>`).join('');
   // lobby bar
   const inLobby = m.state === 'lobby';
   $('lobbybar').classList.toggle('hidden', !inLobby);
@@ -156,22 +157,22 @@ function onRoom(m) {
   const playing = m.state === 'playing' && p && !p.bankrupt;
   db.classList.toggle('hidden', !playing);
   if (playing) {
-    const others = m.players.filter(q => !q.bankrupt);
+    const others = m.players.filter(q => !q.bankrupt && !q.bot);
     if (m.phase === 'night') {
       const n = others.filter(q => q.done).length;
       db.textContent = p.done ? `↩ BACK TO THE TABLES (${n}/${others.length} done)` : (others.length > 1 ? `🛌 DONE FOR TONIGHT (${n}/${others.length})` : '🛌 DONE FOR TONIGHT');
       db.className = p.done ? 'grey' : 'purple';
     } else if (m.phase === 'break') {
-      const n = m.players.filter(q => q.ready).length;
-      db.textContent = p.ready ? `WAITING FOR OTHERS (${n}/${m.players.length})` : `▶ READY FOR NIGHT ${m.night + 1}`;
+      const hum = m.players.filter(q => !q.bot), n = hum.filter(q => q.ready).length;
+      db.textContent = p.ready ? `WAITING FOR OTHERS (${n}/${hum.length})` : `🛏 SLEEP → NIGHT ${m.night + 1}`;
       db.className = p.ready ? 'grey' : 'green';
     }
     const rl = document.querySelector('.readyline');
-    if (rl && m.phase === 'break') rl.textContent = 'Ready: ' + m.players.map(q => `${q.ready ? '✅' : '⏳'} ${q.name}`).join('  ');
+    if (rl && m.phase === 'break') rl.textContent = 'Ready: ' + m.players.filter(q => !q.bot).map(q => `${q.ready ? '✅' : '⏳'} ${q.name}`).join('  ');
   }
   updateClock();
 }
-$('donebtn').onclick = () => { sfx.click(); send({ t: room?.phase === 'break' ? 'ready' : 'done' }); };
+$('donebtn').onclick = () => { sfx.click(); if (room?.phase === 'break') goToSleep(); else send({ t: 'done' }); };
 $('lobbymax').onchange = () => send({ t: 'setMax', max: +$('lobbymax').value });
 $('start').onclick = () => { sfx.click(); send({ t: 'start', nights: +$('nights').value }); };
 $('leave').onclick = () => leaveRoom();
@@ -183,9 +184,9 @@ $('invite').onclick = async () => {
 function leaveRoom() { send({ t: 'leave' }); inRoom = false; room = null; clearOthers(); closePanel(); closeOverlay(); history.replaceState(null, '', '/'); }
 function clearOthers() { for (const o of others.values()) { world.scene.remove(o.fig.group); setPet(o, null); } others.clear(); }
 
-function enterLobby() { where = 'lobby'; me.x = (Math.random() - 0.5) * 6; me.z = 4.5; me.yaw = Math.PI; camYaw = Math.PI; }
+function enterLobby() { setMood('lobby'); where = 'lobby'; me.x = (Math.random() - 0.5) * 6; me.z = 4.5; me.yaw = Math.PI; camYaw = Math.PI; }
 function enterCasino() { where = 'casino'; placeInCasino(); }
-function placeInCasino() { me.x = (Math.random() - 0.5) * 4; me.z = 11; me.yaw = Math.PI; camYaw = Math.PI; }
+function placeInCasino() { setMood('casino'); where = 'casino'; me.x = (Math.random() - 0.5) * 4; me.z = 11; me.yaw = Math.PI; camYaw = Math.PI; }
 
 // ---------------------------------------------------------------- others
 function onSnap(list) {
@@ -203,11 +204,11 @@ function onSnap(list) {
       world.scene.add(o.fig.group);
       others.set(id, o);
     }
-    o.tx = x; o.tz = z; o.tyaw = yaw; o.moving = moving; o.where = inCasino ? 'casino' : 'lobby';
+    o.tx = x; o.tz = z; o.tyaw = yaw; o.moving = moving; o.where = inCasino === 1 ? 'casino' : inCasino === 2 ? 'hotel' : 'lobby';
   }
   for (const [id, o] of others) if (!seen.has(id)) { world.scene.remove(o.fig.group); setPet(o, null); others.delete(id); }
 }
-const off = w => w === 'lobby' ? LOBBY_OFF : new THREE.Vector3();
+const off = w => w === 'lobby' ? LOBBY_OFF : w === 'hotel' ? HOTEL_OFF : new THREE.Vector3();
 
 // ---------------------------------------------------------------- chat, pops, toast
 function onChat(m) {
@@ -251,17 +252,32 @@ const _onRoom = onRoom;
 function trackTime(m) { if (m.t === 'room') { room.phaseEndLocal = performance.now() + m.timeLeft * 1000; if (m.phase === 'night' && !room.nightSec) room.nightSec = Math.max(m.timeLeft, 30); } }
 setInterval(updateClock, 500);
 
+let taxiT = -1, pendingEnd = null, sleeping = false;
 function onNightEnd(m) {
   closePanel();
+  if (!m.final) {
+    pendingEnd = m;
+    where = 'car'; taxiT = 0; world.taxi.position.x = -34; setMood('hotel'); sfx.bell();
+    toast('TAXI TO THE HOTEL · tap to skip', '#f5c518');
+    return;
+  }
+  showResults(m);
+}
+function arriveHotel() {
+  taxiT = -1; where = 'hotel'; me.x = 0.6; me.z = 1.2; me.yaw = Math.PI; camYaw = Math.PI;
+  if (pendingEnd) showResults(pendingEnd);
+  pendingEnd = null;
+}
+function showResults(m) {
   sfx.bell();
   const rows = m.standings.map((s, i) => `<div class="stand"><span>${m.final && s.coins ? `<small style="color:#ffd84a">🪙${s.coins}</small> ` : ''}${m.final ? ['🥇', '🥈', '🥉'][i] || (i + 1) + '.' : (i + 1) + '.'} <span class="dot" style="background:${s.color}"></span>${esc(s.name)}${s.id === myId ? ' (you)' : ''}${s.bankrupt ? ' · BANKRUPT' : ''}</span><span>${money(s.cash)} <small style="opacity:.7">${m.final ? '' : 'tonight ' + signed(s.tonight)}</small></span></div>`).join('');
   const winner = m.standings[0];
   const host = room?.host === myId;
   showOverlay(`<div class="card wide"><h2>${m.final ? (winner.id === myId ? 'YOU WIN THE MONTH!' : `${esc(winner.name)} WINS!`) : `NIGHT ${m.night} IS OVER`}</h2>
-    <p class="sub">${m.final ? `${m.nights} nights at the Googly Grand` : `Taxi back to the hotel… press READY when you want night ${m.night + 1} of ${m.nights} to start`}</p>${rows}
+    <p class="sub">${m.final ? `${m.nights} nights at the Googly Grand` : `You're back in your hotel room. Walk around (TV, safe, fridge, window) — go to bed when you're ready for night ${m.night + 1} of ${m.nights}.`}</p>${rows}
     ${m.final ? '' : '<div class="readyline"></div>'}
-    <div class="row">${m.final ? (host ? '<button id="tolobby" class="green">BACK TO LOBBY</button>' : '<p class="tiny">Waiting for the host…</p>') : `<button id="readybtn" class="green">▶ READY</button>${host && room.players.length > 1 ? '<button id="forcenext" class="gold">START NEXT NIGHT</button>' : ''}`}<button id="closeov" class="grey">LOOK AROUND</button></div></div>`);
-  if ($('readybtn')) $('readybtn').onclick = () => { send({ t: 'ready' }); $('readybtn').disabled = true; $('readybtn').textContent = 'WAITING…'; sfx.click(); };
+    <div class="row">${m.final ? (host ? '<button id="tolobby" class="green">BACK TO LOBBY</button>' : '<p class="tiny">Waiting for the host…</p>') : `<button id="readybtn" class="green">▶ READY</button>${host && room.players.filter(q => !q.bot).length > 1 ? '<button id="forcenext" class="gold">START NEXT NIGHT</button>' : ''}`}<button id="closeov" class="grey">LOOK AROUND</button></div></div>`);
+  if ($('readybtn')) { $('readybtn').textContent = '🛏 SLEEP → NIGHT ' + (m.night + 1); $('readybtn').onclick = () => { closeOverlay(); goToSleep(); }; }
   if ($('forcenext')) $('forcenext').onclick = () => { send({ t: 'nextNight' }); sfx.click(); };
   if (m.final) {
     (winner.id === myId ? sfx.fanfare : sfx.aww)(); if (winner.id === myId) me.fig.cheer(true);
@@ -280,6 +296,14 @@ function onBankrupt() {
   showOverlay(`<div class="card bankrupt"><h2>BANKRUPT!</h2><p class="sub">You lost every chip. <b>YOU LOSE.</b></p><p>You can keep walking around and chatting while the others finish the month.</p><div class="row"><button id="closeov" class="grey">WATCH</button><button id="quitroom" class="red">LEAVE LOBBY</button></div></div>`);
   $('closeov').onclick = closeOverlay; $('quitroom').onclick = () => { closeOverlay(); leaveRoom(); };
 }
+function goToSleep() {
+  if (sleeping) return;
+  sleeping = true; send({ t: 'ready' }); sfx.bell();
+  const waiting = () => room?.players.filter(q => !q.bot && !q.ready).map(q => q.name).join(', ');
+  showOverlay(`<div class="card"><h2>Z z z …</h2><p class="sub">Sweet googly dreams.</p><p class="readyline" id="zzz"></p></div>`);
+  const tick = () => { if (!sleeping) return; const w = waiting(); const z = $('zzz'); if (z) z.textContent = w ? `Waiting for ${w} to go to bed…` : 'Morning is coming…'; setTimeout(tick, 500); };
+  tick();
+}
 function showOverlay(html) { const o = $('overlay'); o.innerHTML = html; o.classList.remove('hidden'); }
 function closeOverlay() { $('overlay').classList.add('hidden'); }
 
@@ -287,9 +311,13 @@ function closeOverlay() { $('overlay').classList.add('hidden'); }
 let panelOpen = null;
 function openPanel(kind) {
   if (!reels) return;
+  if (kind === 'bed') return goToSleep();
+  if (kind === 'window') { toast('The city glitters. The Googly Grand is still ringing…', '#9ad0ff'); camYaw = Math.PI; camPitch = 0.05; return; }
+  if (kind === 'fridge') { send({ t: 'snack' }); return; }
   const p = mine();
+  if (where === 'hotel' && kind !== 'safe' && kind !== 'tv') return;
   if (p?.bankrupt) { toast("You're bankrupt — spectating", '#ff8a8a'); return; }
-  if (room?.phase !== 'night') { toast('The casino is closed right now.', '#ffb3b3'); return; }
+  if (room?.phase !== 'night' && where !== 'hotel') { toast('The casino is closed right now.', '#ffb3b3'); return; }
   closePanel();
   const local = {};
   const api = {
@@ -297,6 +325,9 @@ function openPanel(kind) {
     on: (t, f) => { (local[t] ||= []).push(f); (handlers[t] ||= []).push(f); },
     closeBtn: () => { const b = document.createElement('button'); b.className = 'grey'; b.textContent = 'LEAVE'; b.onclick = closePanel; return b; },
     cash: () => mine()?.cash ?? 0,
+    safe: () => mine()?.safe ?? 0,
+    standings: () => (room?.players || []).map(q => ({ name: q.name, cash: q.cash + (q.safe || 0), tonight: q.cash + (q.safe || 0) - (q.nightStart || 1000) })).sort((a, b) => b.cash - a.cash),
+    tvShow: (t, l, c) => world.showOnTV(t, l, c),
     toast, cheer: big => me.fig.cheer(big), sulk: () => me.fig.sulk(),
   };
   const el = Games[kind](api);
@@ -316,7 +347,7 @@ addEventListener('keydown', e => {
   if (document.activeElement?.tagName === 'INPUT') { if (e.key === 'Escape') document.activeElement.blur(); return; }
   keys.add(e.code);
   if (e.code === 'Enter' && inRoom) { e.preventDefault(); $('say').focus(); }
-  if (e.code === 'KeyE' || e.code === 'Space') act();
+  if (e.code === 'KeyE' || e.code === 'Space') { if (where === 'car') arriveHotel(); else act(); }
   if (e.code === 'Escape') { if (panelOpen) closePanel(); else closeOverlay(); }
   if (e.code === 'KeyM') toast(toggleMute() ? 'MUTED' : 'SOUND ON');
 });
@@ -331,7 +362,7 @@ $('menubtn').onclick = () => {
 };
 // camera drag (mouse, or a finger on the empty right side)
 let drag = null;
-$('view').addEventListener('pointerdown', e => { drag = { id: e.pointerId, x: e.clientX, y: e.clientY }; unlockAudio(); });
+$('view').addEventListener('pointerdown', e => { drag = { id: e.pointerId, x: e.clientX, y: e.clientY }; unlockAudio(); if (where === 'car' && taxiT > 0.5) arriveHotel(); });
 addEventListener('pointermove', e => { if (drag && e.pointerId === drag.id) { camYaw -= (e.clientX - drag.x) * 0.006; camPitch = Math.min(1.1, Math.max(0.05, camPitch + (e.clientY - drag.y) * 0.004)); drag.x = e.clientX; drag.y = e.clientY; } });
 addEventListener('pointerup', e => { if (drag?.id === e.pointerId) drag = null; });
 addEventListener('wheel', e => { camDist = Math.min(9, Math.max(2.2, camDist * (1 + Math.sign(e.deltaY) * 0.08))); }, { passive: true });
@@ -414,7 +445,7 @@ function frame(now) {
     const oo = off(o.where);
     o.fig.group.position.set(o.x + oo.x, 0, o.z + oo.z);
     o.fig.group.rotation.y = o.yaw;
-    o.fig.group.visible = o.where === where;
+    o.fig.group.visible = o.where === where && where !== 'hotel' && where !== 'car';
     o.fig.update(dt, o.moving ? Math.hypot(o.x - px, o.z - pz) / dt : 0);
     if (o.pet) { o.pet.group.visible = o.fig.group.visible; o.pet.update(dt, o.fig.group.position, o.yaw); }
   }
@@ -423,22 +454,36 @@ function frame(now) {
   if (inRoom && sendT <= 0) { sendT = 1 / 15; send({ t: 'pos', x: me.x, z: me.z, yaw: me.yaw, moving: actual > 0.2, where }); }
   // stations
   nearby = null;
-  if (where === 'casino' && inRoom) {
+  if ((where === 'casino' || where === 'hotel') && inRoom) {
     let bd = 1.4;
-    for (const s of world.stations) { const d = Math.hypot(s.x - me.x, s.z - me.z); if (d < bd) { bd = d; nearby = s; } }
+    for (const s of world.stations) {
+      if (s.where !== where) continue; const d = Math.hypot(s.x - me.x, s.z - me.z); if (d < bd) { bd = d; nearby = s; } }
   }
   const pr = $('prompt');
   if (nearby && !panelOpen) { pr.textContent = `${isMobile ? 'Tap PLAY' : 'E'} · ${nearby.title}`; pr.classList.remove('hidden'); } else pr.classList.add('hidden');
   $('act').style.opacity = nearby && !panelOpen ? 1 : 0.35;
+  // taxi ride between the casino and the hotel
+  if (where === 'car') {
+    taxiT += dt;
+    const u = Math.min(1, taxiT / 6), e = u * u * (3 - 2 * u);
+    world.taxi.position.x = -34 + 80 * e;
+    world.wheels.forEach(w => { w.rotation.y -= dt * 20 * Math.sin(Math.PI * u + 0.1); });
+    me.fig.group.visible = false; if (me.pet) me.pet.group.visible = false;
+    const tp = world.taxi.position.clone().add(STREET_OFF);
+    world.camera.position.lerp(tp.clone().add(new THREE.Vector3(-2.5, 2.4, 9)), 1 - Math.exp(-8 * dt));
+    world.camera.lookAt(tp.clone().add(new THREE.Vector3(1.5, 1, 0)));
+    if (taxiT > 6.3) arriveHotel();
+    world.animate(dt, t); world.renderer.render(world.scene, world.camera); requestAnimationFrame(frame); return;
+  }
   // camera
   const target = new THREE.Vector3(me.x + O.x, 1.35, me.z + O.z);
   let cam;
   if (!inRoom) { const a = t * 0.06; cam = new THREE.Vector3(Math.sin(a) * 12, 4.5, Math.cos(a) * 9); target.set(0, 1, 0); }
   else {
-    const dist = panelOpen ? 3 : camDist;
+    const dist = panelOpen ? 3 : where === 'hotel' ? Math.min(camDist, 2.6) : camDist;
     cam = target.clone().add(new THREE.Vector3(-dirX * dist * Math.cos(camPitch), dist * Math.sin(camPitch), -dirZ * dist * Math.cos(camPitch)));
     const b = world.bounds[where];
-    cam.x = Math.min(Math.max(cam.x, b.x0 + O.x + 0.3), b.x1 + O.x - 0.3); cam.z = Math.min(Math.max(cam.z, b.z0 + O.z + 0.3), b.z1 + O.z - 0.3); cam.y = Math.min(cam.y, where === 'lobby' ? 3.9 : 4.9);
+    cam.x = Math.min(Math.max(cam.x, b.x0 + O.x + 0.3), b.x1 + O.x - 0.3); cam.z = Math.min(Math.max(cam.z, b.z0 + O.z + 0.3), b.z1 + O.z - 0.3); cam.y = Math.min(cam.y, where === 'lobby' ? 3.9 : where === 'hotel' ? 2.7 : 4.9);
   }
   world.camera.position.lerp(cam, 1 - Math.exp(-7 * dt));
   world.camera.lookAt(target);
@@ -453,8 +498,10 @@ if (myName && wantRoom) $('go').click();
 if (QS.get('bot')) {
   if (QS.get('dress')) { const [sh, pa, ha, pe] = QS.get('dress').split(','); Object.assign(wardrobe.outfit, { shirt: sh, pants: pa, hat: ha, pet: pe }); wardrobe.coins = 2600; }
   if (QS.get('shop')) setTimeout(showShop, 1500);
+  if (QS.get('solo')) (handlers.rooms ||= []).push(() => { if (!inRoom && !onMsg.botSent) onMsg.botSent = send({ t: 'solo', nights: 3, difficulty: 1 }) || true; });
+  if (QS.get('hotel')) (handlers.start ||= []).push(() => setTimeout(() => send({ t: 'done' }), 1500));
   $('nm').value = 'Tester'; $('go').click();
-  (handlers.rooms ||= []).push(() => { if (!inRoom && !QS.get('stay')) send({ t: 'create', name: 'Bot Lobby' }); });
+  (handlers.rooms ||= []).push(() => { if (!inRoom && !QS.get('stay') && !QS.get('solo') && !onMsg.botSent) { onMsg.botSent = true; send({ t: 'create', name: 'Bot Lobby' }); } });
   (handlers.joined ||= []).push(() => { if (QS.get('start')) setTimeout(() => send({ t: 'start', nights: 3 }), 600); });
   (handlers.start ||= []).push(() => { const k = QS.get('panel'); if (k) setTimeout(() => { const s = world.stations.find(x => x.kind === k); me.x = s.x; me.z = s.z; openPanel(k); }, 800); });
 }
