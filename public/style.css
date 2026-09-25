@@ -116,3 +116,6 @@ canvas.wheel { width: 240px; height: 240px; }
   #panel { bottom: 0; border-radius: 16px 16px 0 0; width: 100vw; }
   .roomrow { flex-wrap: wrap; }
 }
+
+#fsbtn { position: absolute; right: max(64px, calc(env(safe-area-inset-right) + 54px)); bottom: 12px; pointer-events: auto; }
+@media (max-width: 700px) { #fsbtn { bottom: auto; top: 6px; right: 52px; padding: 4px 10px; } }

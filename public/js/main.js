@@ -275,7 +275,7 @@ addEventListener('keyup', e => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
 $('act').onclick = () => act();
 $('menubtn').onclick = () => {
-  showOverlay(`<div class="card"><h2>MENU</h2><div class="row"><button id="m-mute" class="grey">SOUND ON/OFF</button><button id="m-leave" class="red">LEAVE LOBBY</button><button id="m-close">CLOSE</button></div><p class="tiny">WASD / joystick to walk · Shift to run · E or PLAY to use a table · drag to look · Enter to chat</p></div>`);
+  showOverlay(`<div class="card"><h2>MENU</h2><div class="row"><button id="m-mute" class="grey">SOUND ON/OFF</button><button id="m-leave" class="red">LEAVE LOBBY</button><button id="m-close">CLOSE</button></div><p class="tiny">WASD / joystick to walk · Shift to run · E or PLAY to use a table · drag to look · Enter to chat · F full screen</p></div>`);
   $('m-mute').onclick = () => toast(toggleMute() ? 'MUTED' : 'SOUND ON');
   $('m-leave').onclick = () => { closeOverlay(); leaveRoom(); };
   $('m-close').onclick = closeOverlay;
@@ -299,6 +299,21 @@ function moveStick(e) {
   stick.x = dx; stick.y = dy;
   knob.style.left = (40 + dx * 40) + 'px'; knob.style.top = (40 + dy * 40) + 'px';
 }
+
+// full screen (the whole page, so the HUD and panels come along)
+const isIOS = /iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1 && !document.documentElement.requestFullscreen);
+function toggleFullscreen() {
+  const d = document, el = d.documentElement;
+  const on = d.fullscreenElement || d.webkitFullscreenElement;
+  if (on) { (d.exitFullscreen || d.webkitExitFullscreen).call(d); return; }
+  const req = el.requestFullscreen || el.webkitRequestFullscreen;
+  if (req && !isIOS) { req.call(el, { navigationUI: 'hide' })?.catch?.(() => {}); screen.orientation?.lock?.('landscape').catch(() => {}); }
+  else toast('On iPhone: tap Share → Add to Home Screen for full screen', '#ffd84a');
+}
+const fsIcon = () => { const on = document.fullscreenElement || document.webkitFullscreenElement; $('fsbtn').textContent = on ? '🗗' : '⛶'; $('fsbtn2').textContent = on ? '🗗 EXIT FULL SCREEN' : '⛶ FULL SCREEN'; };
+$('fsbtn').onclick = toggleFullscreen; $('fsbtn2').onclick = toggleFullscreen;
+document.addEventListener('fullscreenchange', fsIcon); document.addEventListener('webkitfullscreenchange', fsIcon);
+addEventListener('keydown', e => { if (e.code === 'KeyF' && document.activeElement?.tagName !== 'INPUT') toggleFullscreen(); });
 
 let nearby = null;
 function act() {
