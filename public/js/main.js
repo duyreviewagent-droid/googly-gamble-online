@@ -12,6 +12,17 @@ const signed = v => (v >= 0 ? '+' : '') + money(v);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const isMobile = matchMedia('(pointer: coarse)').matches || /iPhone|iPad|Android/i.test(navigator.userAgent);
 if (isMobile) document.body.classList.add('mobile');
+// phones: the first tap anywhere wakes the audio (iOS needs it inside a touch/click handler)
+for (const ev of ['pointerdown', 'touchend', 'click']) addEventListener(ev, () => unlockAudio(), { capture: true, passive: true });
+if (isMobile) {
+  $('say').placeholder = 'Say something…';
+  // no page scroll, rubber-band or pinch-zoom over the 3D view
+  for (const ev of ['touchstart', 'touchmove']) $('view').addEventListener(ev, e => e.preventDefault(), { passive: false });
+  document.addEventListener('gesturestart', e => e.preventDefault());
+  document.addEventListener('dblclick', e => e.preventDefault());
+  const relayout = () => { document.documentElement.style.setProperty('--vh', innerHeight + 'px'); };
+  relayout(); addEventListener('resize', relayout); addEventListener('orientationchange', () => setTimeout(() => { relayout(); world.resize(); scrollTo(0, 0); }, 250));
+}
 
 // ---------------------------------------------------------------- state
 const COLORS = ['#2f7bff', '#e63946', '#2fb34a', '#ffc93a', '#9b5de5', '#ff7ad9', '#2fd6c8', '#ff8c2e'];
@@ -219,7 +230,9 @@ function onChat(m) {
   while ($('log').children.length > 8) $('log').firstChild.remove();
   setTimeout(() => { d.style.opacity = 0.5; }, 12000);
 }
-$('chatform').onsubmit = e => { e.preventDefault(); const v = $('say').value.trim(); if (v) send({ t: 'chat', text: v }); $('say').value = ''; $('say').blur(); };
+$('chatform').onsubmit = e => { e.preventDefault(); const v = $('say').value.trim(); if (v) send({ t: 'chat', text: v }); $('say').value = ''; $('say').blur(); $('chat').classList.remove('open'); };
+// phones: the chat box hides behind a 💬 button so it never covers the joystick
+$('chatbtn').onclick = () => { const open = $('chat').classList.toggle('open'); sfx.click(); if (open) $('say').focus(); else $('say').blur(); };
 function onPop(m) {
   const f = m.id === myId ? me.fig : others.get(m.id)?.fig;
   if (!f || (m.id !== myId && others.get(m.id)?.where !== where)) return;
@@ -353,17 +366,25 @@ addEventListener('keydown', e => {
 });
 addEventListener('keyup', e => keys.delete(e.code));
 addEventListener('blur', () => keys.clear());
-$('act').onclick = () => act();
+$('act').onclick = () => { if (where === 'car') arriveHotel(); else act(); };
 $('menubtn').onclick = () => {
-  showOverlay(`<div class="card"><h2>MENU</h2><div class="row"><button id="m-mute" class="grey">SOUND ON/OFF</button><button id="m-leave" class="red">LEAVE LOBBY</button><button id="m-close">CLOSE</button></div><p class="tiny">WASD / joystick to walk · Shift to run · E or PLAY to use a table · drag to look · Enter to chat · F full screen</p></div>`);
+  showOverlay(`<div class="card"><h2>MENU</h2><div class="row"><button id="m-mute" class="grey">SOUND ON/OFF</button><button id="m-leave" class="red">LEAVE LOBBY</button><button id="m-close">CLOSE</button></div><p class="tiny">${isMobile ? 'Joystick to walk (push all the way to run) · PLAY to use a table · drag to look · pinch to zoom · 💬 to chat' : 'WASD / joystick to walk · Shift to run · E or PLAY to use a table · drag to look · Enter to chat · F full screen'}</p></div>`);
   $('m-mute').onclick = () => toast(toggleMute() ? 'MUTED' : 'SOUND ON');
   $('m-leave').onclick = () => { closeOverlay(); leaveRoom(); };
   $('m-close').onclick = closeOverlay;
 };
 // camera drag (mouse, or a finger on the empty right side)
 let drag = null;
-$('view').addEventListener('pointerdown', e => { drag = { id: e.pointerId, x: e.clientX, y: e.clientY }; unlockAudio(); if (where === 'car' && taxiT > 0.5) arriveHotel(); });
-addEventListener('pointermove', e => { if (drag && e.pointerId === drag.id) { camYaw -= (e.clientX - drag.x) * 0.006; camPitch = Math.min(1.1, Math.max(0.05, camPitch + (e.clientY - drag.y) * 0.004)); drag.x = e.clientX; drag.y = e.clientY; } });
+const fingers = new Map(); let pinch0 = 0;   // two fingers on the 3D view = pinch zoom
+const spread = () => { const [a, b] = [...fingers.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
+$('view').addEventListener('pointerdown', e => {
+  drag = { id: e.pointerId, x: e.clientX, y: e.clientY }; unlockAudio(); if (where === 'car' && taxiT > 0.5) arriveHotel();
+  if (e.pointerType === 'touch') { fingers.set(e.pointerId, { x: e.clientX, y: e.clientY }); if (fingers.size === 2) { pinch0 = spread(); drag = null; } }
+});
+addEventListener('pointerup', e => fingers.delete(e.pointerId)); addEventListener('pointercancel', e => { fingers.delete(e.pointerId); if (drag?.id === e.pointerId) drag = null; });
+addEventListener('pointermove', e => {
+  if (fingers.has(e.pointerId)) { fingers.set(e.pointerId, { x: e.clientX, y: e.clientY }); if (fingers.size === 2) { const d = spread(); if (pinch0 > 0 && d > 0) camDist = Math.min(9, Math.max(2.2, camDist * pinch0 / d)); pinch0 = d; return; } }
+  if (drag && e.pointerId === drag.id) { camYaw -= (e.clientX - drag.x) * 0.006; camPitch = Math.min(1.1, Math.max(0.05, camPitch + (e.clientY - drag.y) * 0.004)); drag.x = e.clientX; drag.y = e.clientY; } });
 addEventListener('pointerup', e => { if (drag?.id === e.pointerId) drag = null; });
 addEventListener('wheel', e => { camDist = Math.min(9, Math.max(2.2, camDist * (1 + Math.sign(e.deltaY) * 0.08))); }, { passive: true });
 // joystick
@@ -371,6 +392,7 @@ const stick = { x: 0, y: 0, id: null };
 const knob = $('knob'), stickEl = $('stick');
 stickEl.addEventListener('pointerdown', e => { stick.id = e.pointerId; stickEl.setPointerCapture(e.pointerId); moveStick(e); e.stopPropagation(); });
 stickEl.addEventListener('pointermove', e => { if (e.pointerId === stick.id) moveStick(e); });
+stickEl.addEventListener('pointercancel', () => stickEl.dispatchEvent(new PointerEvent('pointerup')));
 stickEl.addEventListener('pointerup', () => { stick.id = null; stick.x = stick.y = 0; knob.style.left = '40px'; knob.style.top = '40px'; });
 function moveStick(e) {
   const r = stickEl.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2;
@@ -462,6 +484,7 @@ function frame(now) {
   const pr = $('prompt');
   if (nearby && !panelOpen) { pr.textContent = `${isMobile ? 'Tap PLAY' : 'E'} · ${nearby.title}`; pr.classList.remove('hidden'); } else pr.classList.add('hidden');
   $('act').style.opacity = nearby && !panelOpen ? 1 : 0.35;
+  document.body.classList.toggle('inlobby', where === 'lobby');
   // taxi ride between the casino and the hotel
   if (where === 'car') {
     taxiT += dt;
@@ -493,6 +516,8 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 show('scr-name');
+// test/debug handle (read-only use from test/mobile.mjs)
+window.gg = { me, stick, fingers, get where() { return where; }, get panel() { return panelOpen?.kind || null; }, get room() { return room; }, get cam() { return { camYaw, camPitch, camDist }; }, get nearby() { return nearby?.kind || null; }, isMobile, openPanel };
 if (myName && wantRoom) $('go').click();
 // test hook: ?bot=1[&panel=slot] creates a lobby, starts, and optionally opens a table
 if (QS.get('bot')) {

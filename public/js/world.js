@@ -226,9 +226,12 @@ export class Googly {
 export class World {
   constructor(canvas) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // phones: fewer pixels and a smaller, cheaper shadow map
+    const phone = matchMedia('(pointer: coarse)').matches || /iPhone|iPad|Android/i.test(navigator.userAgent);
+    this.phone = phone;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, phone ? 1.5 : 2));
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = phone ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     this.scene = new THREE.Scene();
@@ -238,7 +241,7 @@ export class World {
     this.scene.add(new THREE.HemisphereLight(0xffe2c4, 0x2a0a10, 1.1));
     const key = new THREE.DirectionalLight(0xfff0dc, 1.4);
     key.position.set(6, 22, 8); key.castShadow = true;
-    key.shadow.mapSize.set(2048, 2048);
+    key.shadow.mapSize.set(phone ? 1024 : 2048, phone ? 1024 : 2048);
     Object.assign(key.shadow.camera, { left: -22, right: 22, top: 22, bottom: -22, near: 1, far: 60 });
     this.scene.add(key);
     this.blockers = { lobby: [], casino: [] };
@@ -256,7 +259,10 @@ export class World {
   resize() {
     const w = this.canvas.clientWidth || innerWidth, h = this.canvas.clientHeight || innerHeight;
     this.renderer.setSize(w, h, false);
-    this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
+    this.camera.aspect = w / h;
+    // tall (portrait phone) screens: widen the view so the sides of the room still show
+    this.camera.fov = w >= h || !this.phone ? 55 : Math.min(80, 2 * Math.atan(Math.tan(30 * Math.PI / 180) / (w / h)) * 180 / Math.PI);
+    this.camera.updateProjectionMatrix();
   }
 
   room(parent, W, D, H, wallMat) {
